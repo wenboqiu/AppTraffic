@@ -9,7 +9,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "dist": "npm run build:native && npm run build && electron-builder",
-    "build:native": "cargo build --release --manifest-path native/Cargo.toml"
+    "build:native": "cargo build --release --manifest-path native/Cargo.toml",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "dependencies": {},
   "devDependencies": {
@@ -44,7 +45,21 @@
           ]
         }
       ],
-      "icon": "resources/icon.png"
+      "icon": "resources/icon.png",
+      "extraResources": [
+        {
+          "from": "resources",
+          "to": "resources",
+          "filter": [
+            "**/*",
+            "!installer.nsh"
+          ]
+        },
+        {
+          "from": "native/target/release/traffic-etw.exe",
+          "to": "traffic-etw.exe"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -53,20 +68,34 @@
       "include": "resources/installer.nsh",
       "perMachine": true
     },
-    "extraResources": [
-      {
-        "from": "resources",
-        "to": "resources",
-        "filter": [
-          "**/*",
-          "!installer.nsh"
-        ]
+    "mac": {
+      "appId": "me.xueshi.apptraffic",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "category": "public.app-category.utilities",
+      "identity": null,
+      "extendInfo": {
+        "LSUIElement": true
       },
-      {
-        "from": "native/target/release/traffic-etw.exe",
-        "to": "traffic-etw.exe"
-      }
-    ]
+      "extraResources": [
+        {
+          "from": "resources",
+          "to": "resources",
+          "filter": [
+            "tray-icon.png",
+            "icon.png"
+          ]
+        }
+      ]
+    }
   },
   "allowScripts": {
     "electron@31.7.7": true,

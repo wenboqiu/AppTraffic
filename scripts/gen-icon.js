@@ -1,4 +1,4 @@
-// Generates resources/tray-icon.png (32px) and resources/icon.png (256px):
+// Generates resources/tray-icon.png (32px) and resources/icon.png (512px, the minimum for a macOS icon):
 // a blue rounded square with white ↑↓ arrows. Run: node scripts/gen-icon.js
 const zlib = require('zlib');
 const fs = require('fs');
@@ -87,5 +87,5 @@ function render(size) {
 const out = path.join(__dirname, '..', 'resources');
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, 'tray-icon.png'), render(32));
-fs.writeFileSync(path.join(out, 'icon.png'), render(256));
+fs.writeFileSync(path.join(out, 'icon.png'), render(512));
 console.log('wrote', out);

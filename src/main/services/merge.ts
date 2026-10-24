@@ -50,6 +50,8 @@ function vpnAdapters(etw: SystemSample, clash: ClashSample | null): Map<number, 
 const GRACE_TICKS = 5;
 /** Forget a process's ledgers after this long without activity. */
 const IDLE_FORGET_TICKS = 120;
+/** How long unidentified proxy bytes and unclaimed core clients wait for each other. */
+const UNKNOWN_HOLD_TICKS = 3;
 
 interface Volume {
   up: number;
@@ -151,9 +153,15 @@ export class Reconciler {
   private procs = new Map<string, ProcState>();
   /** Client name of the last Clash API seen, for labelling its core while the API is unreachable. */
   private lastRoute = '';
+  /** Unidentified proxy connections waiting for a local app to claim them */
+  private pendingUnknown: { d: ClashDelta; age: number }[] = [];
+  /** Apps that recently talked to the core without an identified Clash connection */
+  private coreClients = new Map<string, { path: string; bytes: number; age: number }>();
 
   reset(): void {
     this.procs.clear();
+    this.pendingUnknown = [];
+    this.coreClients.clear();
   }
 
   merge(clash: ClashSample | null, etw: SystemSample | null, proxyPorts: Set<number>): Delta[] {
@@ -235,14 +243,14 @@ export class Reconciler {
 
     const tunByProc = new Map<string, ClashDelta[]>();
     const proxyByProc = new Map<string, ClashDelta[]>();
+    const unknownProxy: ClashDelta[] = [];
     for (const d of clash.deltas) {
       if (d.via === 'inner') out.push(strip(d));
       // The gap is short connections Clash's polling missed; ETW measured them
       if (d.via === 'inner' || d.via === 'gap') continue;
       if (!d.known) {
-        // Unidentified Tun traffic is in ETW under its real process already; an
-        // unidentified proxy-port client is usually a LAN device (allow-lan)
-        if (d.via === 'proxy') out.push(strip(d));
+        // Unidentified Tun traffic is in ETW under its real process already
+        if (d.via === 'proxy') unknownProxy.push(d);
         continue;
       }
       const map = d.via === 'tun' ? tunByProc : proxyByProc;
@@ -250,6 +258,7 @@ export class Reconciler {
       list.push(d);
       map.set(d.proc, list);
     }
+    out.push(...this.claimUnknownProxy(unknownProxy, viaCore, proxyByProc));
 
     const names = new Set([
       ...external.keys(),
@@ -290,6 +299,64 @@ export class Reconciler {
       out.push({ proc: name, path: st.path, up, down, direct: up + down - proxied, route: clash.route, newConns, hosts });
     }
     return out;
+  }
+
+  /**
+   * Proxy connections Clash couldn't name a process for (find-process-mode off):
+   * when local apps recently exchanged bytes with the core that no identified
+   * connection explains, they're those apps' — shared by loopback volume and added
+   * to proxyByProc. The two sides can arrive a tick or two apart, so unclaimed
+   * bytes wait UNKNOWN_HOLD_TICKS; after that the client is taken to be a LAN
+   * device (allow-lan) and they're returned to be booked as unidentified.
+   */
+  private claimUnknownProxy(
+    unknown: ClashDelta[],
+    viaCore: Map<string, Volume & { path: string }>,
+    proxyByProc: Map<string, ClashDelta[]>,
+  ): Delta[] {
+    for (const c of this.coreClients.values()) c.age++;
+    for (const [name, v] of viaCore) {
+      if (proxyByProc.has(name) || v.up + v.down === 0) continue;
+      const c = this.coreClients.get(name) ?? { path: v.path, bytes: 0, age: 0 };
+      c.bytes += v.up + v.down;
+      c.age = 0;
+      this.coreClients.set(name, c);
+    }
+    for (const [name, c] of this.coreClients) {
+      if (c.age >= UNKNOWN_HOLD_TICKS || proxyByProc.has(name)) this.coreClients.delete(name);
+    }
+
+    const pending = [...this.pendingUnknown.map((p) => p.d), ...unknown];
+    if (!pending.length) return [];
+    if (!this.coreClients.size) {
+      const out: Delta[] = [];
+      const keep: { d: ClashDelta; age: number }[] = [];
+      for (const p of [...this.pendingUnknown, ...unknown.map((d) => ({ d, age: 0 }))]) {
+        if (++p.age >= UNKNOWN_HOLD_TICKS) out.push(strip(p.d));
+        else keep.push(p);
+      }
+      this.pendingUnknown = keep;
+      return out;
+    }
+
+    this.pendingUnknown = [];
+    const sum = [...this.coreClients.values()].reduce((n, c) => n + c.bytes, 0);
+    for (const [name, c] of this.coreClients) {
+      const share = c.bytes / sum;
+      const scaled = pending.map((d) => ({
+        ...d,
+        proc: name,
+        path: c.path,
+        up: Math.round(d.up * share),
+        down: Math.round(d.down * share),
+        direct: Math.round(d.direct * share),
+        newConns: Math.round(d.newConns * share),
+        hosts: d.hosts.map(([h, n]) => [h, Math.round(n * share)] as [string, number]),
+        known: true,
+      }));
+      proxyByProc.set(name, [...(proxyByProc.get(name) ?? []), ...scaled]);
+    }
+    return [];
   }
 
   /**

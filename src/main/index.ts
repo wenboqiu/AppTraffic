@@ -14,10 +14,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let tray: Tray | null = null;
+let trayMenu: Menu | null = null;
 
 app.whenReady().then(() => {
   // Groups notifications / taskbar entries under the app (Windows only)
   if (process.platform === 'win32') app.setAppUserModelId('me.xueshi.apptraffic');
+  // Menu-bar app: no Dock icon
+  if (process.platform === 'darwin') app.dock?.hide();
 
   importLegacyStore();
   loadStore();
@@ -37,7 +40,7 @@ app.whenReady().then(() => {
   updateTrayMenu(tray);
 
   tray.on('click', () => togglePopup(tray!));
-  tray.on('right-click', () => tray!.popUpContextMenu());
+  tray.on('right-click', () => tray!.popUpContextMenu(trayMenu ?? undefined));
 
   onTick(() => {
     pushSnapshot();
@@ -94,7 +97,9 @@ function updateTrayMenu(t: Tray): void {
     { label: '退出', role: 'quit' },
   ]);
 
-  t.setContextMenu(menu);
+  trayMenu = menu;
+  // On macOS a context menu set on the tray takes over the left click, which opens the popup
+  if (process.platform !== 'darwin') t.setContextMenu(menu);
 }
 
 function loadTrayIcon(): Electron.NativeImage {

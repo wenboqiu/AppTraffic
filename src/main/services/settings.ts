@@ -9,9 +9,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 interface Settings {
   /** The user turned on system-wide statistics; start the ETW helper on launch. */
   etwEnabled: boolean;
+  /** macOS: nettop needs no permission, so system statistics are on unless turned off. */
+  nettopEnabled: boolean;
 }
 
-const DEFAULTS: Settings = { etwEnabled: false };
+const DEFAULTS: Settings = { etwEnabled: false, nettopEnabled: true };
 let cache: Settings | null = null;
 
 function file(): string {

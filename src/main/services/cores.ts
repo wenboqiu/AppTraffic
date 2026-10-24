@@ -78,10 +78,17 @@ const key = (name: string) => stem(name).toLowerCase();
 const CORE_SET = new Set(CORE_NAMES.map(key));
 const VPN_CLIENT_SET = new Set(VPN_CLIENTS.map(key));
 
-/** File name of an executable path ("C:\\x\\a.exe" or "/usr/bin/a"). */
+/**
+ * Display name of an executable path: its file name ("C:\\x\\a.exe", "/usr/bin/a"),
+ * except that on macOS everything inside an app bundle counts as the app, so
+ * "Google Chrome Helper" and friends are "Google Chrome". Cores and VPN clients
+ * keep their own name: they're recognised by it and their bytes aren't the app's.
+ */
 export function procName(exePath: string): string {
   if (!exePath) return UNKNOWN_PROCESS;
-  return exePath.split(/[\\/]/).pop() || exePath;
+  const file = exePath.split(/[\\/]/).pop() || exePath;
+  if (isCore(file) || isVpnClient(file)) return file;
+  return exePath.match(/^\/(?:[^/]+\/)*?([^/]+)\.app\//)?.[1] ?? file;
 }
 
 export function isCore(name: string): boolean {

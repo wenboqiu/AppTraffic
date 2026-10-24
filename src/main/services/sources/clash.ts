@@ -50,8 +50,8 @@ export class ClashSource implements TrafficSource<ClashSample> {
       // mihomo labels its own provider/GeoIP downloads process "mihomo" with no path
       const own = c.metadata.process === 'mihomo' && !c.metadata.processPath;
       const via = own ? 'inner' : viaOf(c);
-      // sing-box reports only processPath
-      const exe = own ? '' : c.metadata.process || (c.metadata.processPath ? procName(c.metadata.processPath) : '');
+      // Named from the path like system-source rows (macOS app bundles); sing-box reports only processPath
+      const exe = own ? '' : c.metadata.processPath ? procName(c.metadata.processPath) : c.metadata.process || '';
       // "Inner" connections are ones the core opens itself (DNS upstreams, rule-provider updates…)
       const proc = exe || (via === 'inner' ? CORE_INNER : UNKNOWN_PROCESS);
       if (baseline) {
