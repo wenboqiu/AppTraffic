@@ -89,17 +89,22 @@ export default function App() {
           <StatCell label="下载" value={fmtBytes(snap?.totalDown ?? 0)} />
           <StatCell label="上传" value={fmtBytes(snap?.totalUp ?? 0)} />
           <StatCell
-            label="走代理"
+            label="代理 / VPN"
             value={total && routes.length ? `${Math.round(((total - (snap?.totalDirect ?? 0)) / total) * 100)}%` : '—'}
           />
         </div>
-        {routes.length > 0 && (
+        {(routes.length > 0 || (snap?.totalTunnel ?? 0) > 0) && (
           <div className="route-row">
             {routes.map(([r, b]) => (
               <span key={r}>
                 经 {r} {fmtBytes(b)}
               </span>
             ))}
+            {(snap?.totalTunnel ?? 0) > 0 && (
+              <span className="route-tunnel" title="VPN 客户端发出的加密流量，与经 VPN 的应用流量重复，不计入总量">
+                VPN 隧道 {fmtBytes(snap!.totalTunnel)}（不计入）
+              </span>
+            )}
           </div>
         )}
         <div className="speed-row">

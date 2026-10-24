@@ -14,6 +14,8 @@ export default function ProcessList({ procs }: { procs: ProcRow[] }) {
     <div className="proc-list">
       {procs.map((p) => {
         const total = p.up + p.down;
+        const proxied = total - p.direct - p.tunnel;
+        const isTunnel = p.tunnel > total / 2;
         const active = p.speedUp + p.speedDown > 0;
         const expanded = open === p.name;
         return (
@@ -22,6 +24,7 @@ export default function ProcessList({ procs }: { procs: ProcRow[] }) {
               <div className="proc-line">
                 <span className="proc-name" title={p.path || p.name}>
                   {p.name.replace(/\.exe$/i, '')}
+                  {isTunnel && <span className="proc-tag">VPN 隧道</span>}
                 </span>
                 <span className="proc-total">{fmtBytes(total)}</span>
               </div>
@@ -30,10 +33,8 @@ export default function ProcessList({ procs }: { procs: ProcRow[] }) {
                   className="proc-bar-direct"
                   style={{ width: `${max ? (p.direct / max) * 100 : 0}%` }}
                 />
-                <div
-                  className="proc-bar-proxy"
-                  style={{ width: `${max ? ((total - p.direct) / max) * 100 : 0}%` }}
-                />
+                <div className="proc-bar-proxy" style={{ width: `${max ? (proxied / max) * 100 : 0}%` }} />
+                <div className="proc-bar-tunnel" style={{ width: `${max ? (p.tunnel / max) * 100 : 0}%` }} />
               </div>
               <div className="proc-sub">
                 <span>
@@ -61,6 +62,7 @@ export default function ProcessList({ procs }: { procs: ProcRow[] }) {
                     p.conns > 0 && `累计 ${p.conns} 个连接`,
                     `直连 ${fmtBytes(p.direct)}`,
                     ...p.routes.map(([r, b]) => `经 ${r} ${fmtBytes(b)}`),
+                    p.tunnel > 0 && `VPN 隧道 ${fmtBytes(p.tunnel)}（与经 VPN 的流量重复，不计入总量）`,
                   ]
                     .filter(Boolean)
                     .join(' · ')}

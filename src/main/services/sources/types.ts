@@ -34,6 +34,8 @@ export interface ClashDelta extends Delta {
 export interface ClashSample {
   /** Route label for proxied bytes: the client running the core ("Clash Verge"…). */
   route: string;
+  /** Name of the core's TUN adapter when TUN mode is on (mihomo /configs), else null. */
+  tunDevice: string | null;
   /** Bytes seen since the previous successful poll. */
   deltas: ClashDelta[];
   /** Open connections per process right now (for the "N 个连接" hint). */
@@ -46,6 +48,17 @@ export interface EtwProc {
   up: number;
   down: number;
   hosts: [string, number][];
+  /** [interface index, up, down]; index 0 = local address not on any known interface */
+  ifs?: [number, number, number][];
+}
+
+export interface EtwIface {
+  index: number;
+  /** "WLAN", "wg-home"… */
+  alias: string;
+  desc: string;
+  /** Virtual adapter that tunnels traffic elsewhere (VPN, TUN proxy, overlay network) */
+  vpn: boolean;
 }
 
 /** Loopback TCP from `client` to the process listening on `port`. */
@@ -62,4 +75,6 @@ export interface EtwLoop {
 export interface EtwSample {
   procs: EtwProc[];
   loops: EtwLoop[];
+  /** Interfaces referenced by procs[].ifs */
+  ifaces: EtwIface[];
 }

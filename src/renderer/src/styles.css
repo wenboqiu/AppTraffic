@@ -228,6 +228,17 @@ button { cursor: pointer; font-family: inherit; }
 }
 .proc-bar-proxy  { background: var(--accent); transition: width .3s; }
 .proc-bar-direct { background: var(--success); transition: width .3s; }
+.proc-bar-tunnel { background: var(--text-3); transition: width .3s; }
+.proc-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 400;
+}
+.route-tunnel { color: var(--text-3); }
 
 .proc-sub {
   display: flex;

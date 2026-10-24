@@ -109,7 +109,7 @@ export class ClashSource implements TrafficSource<ClashSample> {
 
     const liveConns = new Map<string, number>();
     for (const c of this.live.values()) liveConns.set(c.proc, (liveConns.get(c.proc) ?? 0) + 1);
-    return { route, deltas, liveConns };
+    return { route, tunDevice: await this.client.tunDevice(), deltas, liveConns };
   }
 
   /** Looking for a controller and none found yet: other sources should wait for it. */

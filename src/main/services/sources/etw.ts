@@ -11,7 +11,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { execFile } from 'child_process';
 import type { SourceStatus } from '../../../shared/types';
-import type { EtwLoop, EtwProc, EtwSample, TrafficSource } from './types';
+import type { EtwIface, EtwLoop, EtwProc, EtwSample, TrafficSource } from './types';
 
 const PIPE = '\\\\.\\pipe\\apptraffic-etw';
 const EXE = 'traffic-etw.exe';
@@ -21,6 +21,7 @@ const SILENCE_MS = 6000;
 interface Line {
   procs?: EtwProc[];
   loops?: EtwLoop[];
+  ifaces?: EtwIface[];
 }
 
 export function helperPath(): string {
@@ -37,6 +38,8 @@ export class EtwSource implements TrafficSource<EtwSample> {
   private buf = '';
   private procs = new Map<string, EtwProc>();
   private loops = new Map<string, EtwLoop>();
+  /** Latest description of every interface seen (index -> info) */
+  private ifaces = new Map<number, EtwIface>();
   private starting = false;
   private lastError: string | null = null;
 
@@ -46,7 +49,11 @@ export class EtwSource implements TrafficSource<EtwSample> {
       this.connect();
       throw new Error('helper not connected');
     }
-    const sample: EtwSample = { procs: [...this.procs.values()], loops: [...this.loops.values()] };
+    const sample: EtwSample = {
+      procs: [...this.procs.values()],
+      loops: [...this.loops.values()],
+      ifaces: [...this.ifaces.values()],
+    };
     this.procs.clear();
     this.loops.clear();
     return sample;
@@ -113,18 +120,28 @@ export class EtwSource implements TrafficSource<EtwSample> {
       this.lastLineAt = Date.now();
       for (const p of line.procs ?? []) this.addProc(p);
       for (const l of line.loops ?? []) this.addLoop(l);
+      for (const f of line.ifaces ?? []) this.ifaces.set(f.index, f);
     }
   }
 
   private addProc(p: EtwProc): void {
     const acc = this.procs.get(p.path);
     if (!acc) {
-      this.procs.set(p.path, { ...p, hosts: [...p.hosts] });
+      this.procs.set(p.path, { ...p, hosts: [...p.hosts], ifs: (p.ifs ?? []).map((f) => [...f]) });
       return;
     }
     acc.up += p.up;
     acc.down += p.down;
     acc.hosts.push(...p.hosts);
+    for (const [index, up, down] of p.ifs ?? []) {
+      const f = acc.ifs?.find((x) => x[0] === index);
+      if (f) {
+        f[1] += up;
+        f[2] += down;
+      } else {
+        (acc.ifs ??= []).push([index, up, down]);
+      }
+    }
   }
 
   private addLoop(l: EtwLoop): void {

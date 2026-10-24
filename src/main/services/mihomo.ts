@@ -8,6 +8,8 @@ import { discover } from './discovery';
 
 /** Re-run discovery at most this often while no controller is reachable. */
 const REDISCOVER_MS = 10_000;
+/** TUN settings change rarely; re-read them this often. */
+const CONFIG_TTL_MS = 30_000;
 
 export interface MihomoConnection {
   id: string;
@@ -77,6 +79,7 @@ export class MihomoClient {
   private lastDiscovery = 0;
   private discovering: Promise<void> | null = null;
   version: string | null = null;
+  private tun: { device: string | null; at: number } = { device: null, at: 0 };
 
   get endpointLabel(): string {
     return this.endpoint ? describeEndpoint(this.endpoint) : '';
@@ -104,6 +107,21 @@ export class MihomoClient {
     // Discovery spawns PowerShell and can take a second; don't hold up the tick for it
     if (!this.endpoint) throw new NotDetectedError();
     return this.endpoint;
+  }
+
+  /** The core's TUN adapter name when TUN mode is on; null otherwise or if unknown (sing-box). */
+  async tunDevice(): Promise<string | null> {
+    const ep = this.endpoint;
+    if (!ep) return null;
+    if (Date.now() - this.tun.at < CONFIG_TTL_MS) return this.tun.device;
+    this.tun.at = Date.now();
+    try {
+      const cfg = await request<{ tun?: { enable?: boolean; device?: string } }>(ep, '/configs');
+      this.tun.device = cfg.tun?.enable ? cfg.tun.device || null : null;
+    } catch {
+      // keep the previous answer
+    }
+    return this.tun.device;
   }
 
   async getConnections(): Promise<ConnectionsResponse> {

@@ -9,7 +9,7 @@ import { EtwSource } from './sources/etw';
 import { Reconciler } from './merge';
 import { systemProxyPorts } from './sysproxy';
 import type { EtwSample, TrafficSource } from './sources/types';
-import { DIRECT } from '../../shared/types';
+import { DIRECT, TUNNEL } from '../../shared/types';
 import type { ProcRow, Range, Snapshot } from '../../shared/types';
 
 const POLL_MS = 1000;
@@ -56,6 +56,10 @@ export async function runSourceAction(id: string): Promise<void> {
   listeners.forEach((fn) => fn());
 }
 
+function joinEtw(a: EtwSample, b: EtwSample): EtwSample {
+  return { procs: [...a.procs, ...b.procs], loops: [...a.loops, ...b.loops], ifaces: [...a.ifaces, ...b.ifaces] };
+}
+
 async function settle<S>(src: TrafficSource<S>): Promise<S | null> {
   try {
     return await src.poll();
@@ -75,10 +79,10 @@ async function tick(): Promise<void> {
     // from an app's; hold them and reconcile together once it's known.
     let e = polled;
     if (e && clash.searching) {
-      heldEtw = heldEtw ? { procs: [...heldEtw.procs, ...e.procs], loops: [...heldEtw.loops, ...e.loops] } : e;
+      heldEtw = heldEtw ? joinEtw(heldEtw, e) : e;
       e = null;
     } else if (heldEtw) {
-      e = { procs: [...heldEtw.procs, ...(e?.procs ?? [])], loops: [...heldEtw.loops, ...(e?.loops ?? [])] };
+      e = e ? joinEtw(heldEtw, e) : heldEtw;
       heldEtw = null;
     }
     liveConns = c?.liveConns ?? new Map();
@@ -92,24 +96,25 @@ async function tick(): Promise<void> {
     }
 
     const tickSpeed = new Map<string, { up: number; down: number }>();
+    // Overall speed leaves out VPN carrier traffic, which repeats bytes already counted
+    let tickUp = 0;
+    let tickDown = 0;
     for (const d of reconciler.merge(c, e, systemProxyPorts())) {
       addDelta(d);
       const s = tickSpeed.get(d.proc) ?? { up: 0, down: 0 };
       s.up += d.up;
       s.down += d.down;
       tickSpeed.set(d.proc, s);
+      if (d.route !== TUNNEL) {
+        tickUp += d.up;
+        tickDown += d.down;
+      }
     }
 
     // The first tick after (re)connecting only sets baselines, so there's no interval to divide by yet
     if (lastTickAt) {
       const secs = Math.max((now - lastTickAt) / 1000, 0.001);
-      let up = 0;
-      let down = 0;
-      for (const s of tickSpeed.values()) {
-        up += s.up;
-        down += s.down;
-      }
-      speed = { up: up / secs, down: down / secs };
+      speed = { up: tickUp / secs, down: tickDown / secs };
       procSpeed = new Map([...tickSpeed].map(([k, s]) => [k, { up: s.up / secs, down: s.down / secs }]));
     }
     lastTickAt = now;
@@ -130,8 +135,9 @@ export function getSnapshot(range: Range): Snapshot {
       up: s.up,
       down: s.down,
       direct: s.routes[DIRECT] ?? 0,
+      tunnel: s.routes[TUNNEL] ?? 0,
       routes: Object.entries(s.routes)
-        .filter(([r]) => r !== DIRECT)
+        .filter(([r]) => r !== DIRECT && r !== TUNNEL)
         .sort((a, b) => b[1] - a[1]),
       conns: s.conns,
       liveConns: liveConns.get(name) ?? 0,
@@ -144,13 +150,23 @@ export function getSnapshot(range: Range): Snapshot {
     .filter((p) => p.up + p.down > 0 || p.liveConns > 0)
     .sort((a, b) => b.up + b.down - (a.up + a.down));
 
-  for (const p of procs) for (const [r, b] of p.routes) routeTotals.set(r, (routeTotals.get(r) ?? 0) + b);
+  let totalUp = 0;
+  let totalDown = 0;
+  for (const p of procs) {
+    for (const [r, b] of p.routes) routeTotals.set(r, (routeTotals.get(r) ?? 0) + b);
+    // Routes don't keep up/down apart, so take the tunnel share out of both
+    const total = p.up + p.down;
+    const keep = total ? 1 - p.tunnel / total : 1;
+    totalUp += p.up * keep;
+    totalDown += p.down * keep;
+  }
 
   return {
     range,
     sources: sources.map((s) => s.status()),
-    totalUp: procs.reduce((a, p) => a + p.up, 0),
-    totalDown: procs.reduce((a, p) => a + p.down, 0),
+    totalUp,
+    totalDown,
+    totalTunnel: procs.reduce((a, p) => a + p.tunnel, 0),
     totalDirect: procs.reduce((a, p) => a + p.direct, 0),
     routes: [...routeTotals].sort((a, b) => b[1] - a[1]),
     speedUp: speed.up,

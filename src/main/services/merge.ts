@@ -17,12 +17,34 @@
  *
  * L1: for a local proxy without a Clash API, the proxy process's upstream bytes are
  * split among its loopback clients in proportion to what each one exchanged.
+ *
+ * VPNs: ETW also says which interface each byte used. Bytes on a VPN adapter are
+ * booked to that VPN; the VPN client's own traffic (the encrypted carrier of the
+ * same bytes) is booked to the TUNNEL route, which totals leave out.
  */
 
 import type { Delta } from './store';
 import type { ClashDelta, ClashSample, EtwLoop, EtwSample } from './sources/types';
-import { isCore, procName } from './cores';
-import { CORE_INNER } from '../../shared/types';
+import { isCore, isVpnClient, procName } from './cores';
+import { CORE_INNER, TUNNEL, VPN_ROUTE_PREFIX } from '../../shared/types';
+
+/** Adapter names a Clash-compatible core gives its TUN device. */
+const CLASH_TUN_HINT = /mihomo|clash|sing-?box|\bmeta\b/i;
+
+/**
+ * VPN adapters by interface index -> alias. A Clash core's own TUN adapter is left
+ * out while its API is reachable: Clash's connection list says what went through it.
+ */
+function vpnAdapters(etw: EtwSample, clash: ClashSample | null): Map<number, string> {
+  const out = new Map<number, string>();
+  const tun = clash?.tunDevice?.toLowerCase();
+  for (const f of etw.ifaces) {
+    if (!f.vpn) continue;
+    if (clash && (f.alias.toLowerCase() === tun || CLASH_TUN_HINT.test(`${f.alias} ${f.desc}`))) continue;
+    out.set(f.index, f.alias);
+  }
+  return out;
+}
 
 /** Ticks without ETW bytes on a ledger before Clash's unmatched bytes are booked. */
 const GRACE_TICKS = 5;
@@ -140,31 +162,64 @@ export class Reconciler {
       return clash ? clash.deltas.map(strip) : [];
     }
 
-    // ETW external bytes per process name
+    const out: Delta[] = [];
+    const vpnIfaces = vpnAdapters(etw, clash);
+    let vpnActive = false;
+
+    // ETW external bytes per process name. Bytes on a VPN adapter are booked to that
+    // VPN right away; only the rest (physical NICs, Clash's own TUN) goes on.
     const external = new Map<string, Delta>();
     for (const p of etw.procs) {
       const name = procName(p.path);
+      let up = p.up;
+      let down = p.down;
+      let viaVpn: Delta | null = null;
+      for (const [index, ifUp, ifDown] of p.ifs ?? []) {
+        const alias = vpnIfaces.get(index);
+        if (alias === undefined || ifUp + ifDown === 0) continue;
+        vpnActive = true;
+        up -= ifUp;
+        down -= ifDown;
+        const route = VPN_ROUTE_PREFIX + alias;
+        viaVpn = { proc: name, path: p.path, up: ifUp, down: ifDown, direct: 0, route, newConns: 0, hosts: [] };
+        out.push(viaVpn);
+      }
+      if (up + down <= 0) {
+        if (viaVpn) viaVpn.hosts = p.hosts;
+        continue;
+      }
       const d = external.get(name) ?? { proc: name, path: p.path, up: 0, down: 0, direct: 0, route: '', newConns: 0, hosts: [] };
-      d.up += p.up;
-      d.down += p.down;
+      d.up += Math.max(0, up);
+      d.down += Math.max(0, down);
       d.hosts.push(...p.hosts);
       external.set(name, d);
+    }
+    // A VPN client's own traffic carries the bytes above a second time, encrypted
+    for (const [name, d] of external) {
+      if (!isVpnClient(name)) continue;
+      out.push({ ...d, direct: 0, route: TUNNEL });
+      external.delete(name);
     }
 
     if (!clash) {
       this.procs.clear();
-      const out = this.attributeLocalProxies(external, etw.loops, proxyPorts, false);
+      out.push(...this.attributeLocalProxies(external, etw.loops, proxyPorts, false));
       for (const d of external.values()) {
-        // What's left on a core (TUN upstream, DNS…) is still the core's own, not an app's
-        const proc = isCore(d.proc) ? CORE_INNER : d.proc;
-        out.push({ ...d, proc, path: proc === d.proc ? d.path : '', direct: d.up + d.down });
+        // What's left on a core is still the core's own, not an app's: the carrier
+        // of a TUN adapter's traffic, or its DNS and updates
+        if (isCore(d.proc)) {
+          const route = vpnActive ? TUNNEL : '';
+          out.push({ ...d, proc: CORE_INNER, path: '', direct: route ? 0 : d.up + d.down, route });
+        } else {
+          out.push({ ...d, direct: d.up + d.down });
+        }
       }
       return out;
     }
 
     this.lastRoute = clash.route;
     for (const name of [...external.keys()]) if (isCore(name)) external.delete(name);
-    const out = this.attributeLocalProxies(external, etw.loops, proxyPorts, true);
+    out.push(...this.attributeLocalProxies(external, etw.loops, proxyPorts, true));
 
     // What each app exchanged with the core's local ports
     const viaCore = new Map<string, Volume & { path: string }>();

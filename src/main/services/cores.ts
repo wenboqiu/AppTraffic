@@ -20,6 +20,31 @@ export const CORE_NAMES = [
 ];
 const CORE_SET = new Set(CORE_NAMES.map((n) => n.toLowerCase()));
 
+/**
+ * VPN clients whose own traffic is the encrypted carrier of what apps send through
+ * the VPN adapter, i.e. the same bytes a second time.
+ */
+const VPN_CLIENT_SET = new Set(
+  [
+    'openvpn.exe',
+    'openvpnserv.exe',
+    'wireguard.exe',
+    'tailscaled.exe',
+    'zerotier-one_x64.exe',
+    'zerotier-one_x86.exe',
+    'vpnagent.exe', // Cisco AnyConnect / Secure Client
+    'PanGPS.exe', // GlobalProtect
+    'FortiSSLVPNdaemon.exe',
+    'openconnect.exe',
+    'hamachi-2.exe',
+    'nordvpn-service.exe',
+    'expressvpnd.exe',
+    'ProtonVPN.WireGuardService.exe',
+    'netbird.exe',
+    'easytier-core.exe',
+  ].map((n) => n.toLowerCase()),
+);
+
 /** Friendly names for the parent process that launched a core. */
 const CLIENT_LABELS: Record<string, string> = {
   'clash-verge': 'Clash Verge',
@@ -44,6 +69,10 @@ export function procName(exePath: string): string {
 
 export function isCore(name: string): boolean {
   return CORE_SET.has(name.toLowerCase());
+}
+
+export function isVpnClient(name: string): boolean {
+  return VPN_CLIENT_SET.has(name.toLowerCase());
 }
 
 /** "Clash Verge" for a core started by clash-verge.exe; the core's own stem otherwise. */
