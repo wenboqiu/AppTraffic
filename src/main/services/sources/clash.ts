@@ -1,10 +1,11 @@
 /**
- * Traffic source backed by mihomo's /connections (Clash Verge Rev and other
- * Clash-API cores). Connections are short-lived and vanish from the list once
+ * Traffic source backed by a Clash-compatible /connections API (mihomo in Clash
+ * Verge, Mihomo Party, FlClash…, or sing-box's clash_api). Connections are short-lived and vanish from the list once
  * closed, so we remember each id's last reading and only report the difference.
  */
 
-import { MihomoClient } from '../mihomo';
+import { MihomoClient, NotDetectedError, type MihomoConnection } from '../mihomo';
+import { procName } from '../cores';
 import { CORE_INNER, UNATTRIBUTED, UNKNOWN_PROCESS } from '../../../shared/types';
 import type { SourceStatus } from '../../../shared/types';
 import type { ClashDelta, ClashSample, ClashVia, TrafficSource } from './types';
@@ -20,17 +21,21 @@ export class ClashSource implements TrafficSource<ClashSample> {
   private client = new MihomoClient();
   private live = new Map<string, LiveConn>();
   private lastGlobal: { up: number; down: number } | null = null;
-  private lastError: string | null = '正在连接 Clash…';
+  private connected = false;
+  private lastError: string | null = null;
 
   async poll(): Promise<ClashSample> {
     let resp;
     try {
       resp = await this.client.getConnections();
     } catch (e) {
-      this.lastError = `无法连接 Clash Verge：${(e as Error).message}`;
+      this.connected = false;
+      this.lastError = e instanceof NotDetectedError ? null : (e as Error).message;
       throw e;
     }
+    this.connected = true;
     this.lastError = null;
+    const route = this.client.client ?? 'Clash';
 
     const deltas: ClashDelta[] = [];
     const seen = new Set<string>();
@@ -42,8 +47,13 @@ export class ClashSource implements TrafficSource<ClashSample> {
 
     for (const c of resp.connections ?? []) {
       seen.add(c.id);
+      // mihomo labels its own provider/GeoIP downloads process "mihomo" with no path
+      const own = c.metadata.process === 'mihomo' && !c.metadata.processPath;
+      const via = own ? 'inner' : viaOf(c);
+      // sing-box reports only processPath
+      const exe = own ? '' : c.metadata.process || (c.metadata.processPath ? procName(c.metadata.processPath) : '');
       // "Inner" connections are ones the core opens itself (DNS upstreams, rule-provider updates…)
-      const proc = c.metadata.process || (c.metadata.type === 'Inner' ? CORE_INNER : UNKNOWN_PROCESS);
+      const proc = exe || (via === 'inner' ? CORE_INNER : UNKNOWN_PROCESS);
       if (baseline) {
         this.live.set(c.id, { proc, up: c.upload, down: c.download });
         continue;
@@ -56,18 +66,17 @@ export class ClashSource implements TrafficSource<ClashSample> {
       attributedUp += dUp;
       attributedDown += dDown;
       if (!prev || dUp || dDown) {
-        const via: ClashVia =
-          c.metadata.type === 'Inner' ? 'inner' : c.metadata.type === 'Tun' ? 'tun' : 'proxy';
         deltas.push({
           proc,
-          path: c.metadata.processPath,
+          path: c.metadata.processPath ?? '',
           up: dUp,
           down: dDown,
-          direct: c.chains?.[0] === 'DIRECT' ? dUp + dDown : 0,
+          direct: isDirect(c) ? dUp + dDown : 0,
+          route,
           newConns: prev ? 0 : 1,
           hosts: [[c.metadata.host || c.metadata.destinationIP, dUp + dDown]],
           via,
-          known: !!c.metadata.process,
+          known: !!exe,
         });
       }
     }
@@ -87,6 +96,7 @@ export class ClashSource implements TrafficSource<ClashSample> {
           up: Math.max(0, gapUp),
           down: Math.max(0, gapDown),
           direct: 0,
+          route,
           newConns: 0,
           hosts: [],
           via: 'gap',
@@ -99,7 +109,12 @@ export class ClashSource implements TrafficSource<ClashSample> {
 
     const liveConns = new Map<string, number>();
     for (const c of this.live.values()) liveConns.set(c.proc, (liveConns.get(c.proc) ?? 0) + 1);
-    return { deltas, liveConns };
+    return { route, deltas, liveConns };
+  }
+
+  /** Looking for a controller and none found yet: other sources should wait for it. */
+  get searching(): boolean {
+    return this.client.searching;
   }
 
   reset(): void {
@@ -108,14 +123,28 @@ export class ClashSource implements TrafficSource<ClashSample> {
   }
 
   status(): SourceStatus {
-    return {
-      id: this.id,
-      label: 'Clash',
-      connected: this.lastError === null,
-      endpoint: this.client.endpointLabel,
-      version: this.client.version,
-      error: this.lastError,
-      action: null,
-    };
+    const client = this.client.client ?? 'Clash';
+    if (this.connected) {
+      const version = this.client.version ? ` · ${this.client.version}` : '';
+      return { id: this.id, label: '代理', state: 'on', detail: `${client}${version}`, action: null };
+    }
+    if (this.lastError) {
+      return { id: this.id, label: '代理', state: 'error', detail: `${client} 连接失败：${this.lastError}`, action: null };
+    }
+    const detail = this.client.searching ? '正在检测代理…' : '未检测到 Clash 兼容的代理';
+    return { id: this.id, label: '代理', state: 'off', detail, action: null };
   }
+}
+
+/** mihomo: "HTTP", "Socks5", "Tun", "Inner"…; sing-box: "mixed/mixed-in", "tun/tun-in"… */
+function viaOf(c: MihomoConnection): ClashVia {
+  const type = (c.metadata.type ?? '').toLowerCase();
+  if (type === 'inner') return 'inner';
+  if (type === 'tun' || type.startsWith('tun/')) return 'tun';
+  return 'proxy';
+}
+
+/** The chain lists the outbound (and the groups that picked it); DIRECT means no proxy node. */
+function isDirect(c: MihomoConnection): boolean {
+  return (c.chains ?? []).some((name) => name.toLowerCase() === 'direct');
 }

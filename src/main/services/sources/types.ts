@@ -32,6 +32,8 @@ export interface ClashDelta extends Delta {
 }
 
 export interface ClashSample {
+  /** Route label for proxied bytes: the client running the core ("Clash Verge"…). */
+  route: string;
   /** Bytes seen since the previous successful poll. */
   deltas: ClashDelta[];
   /** Open connections per process right now (for the "N 个连接" hint). */

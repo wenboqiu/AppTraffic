@@ -21,36 +21,13 @@
 
 import type { Delta } from './store';
 import type { ClashDelta, ClashSample, EtwLoop, EtwSample } from './sources/types';
-import { UNKNOWN_PROCESS } from '../../shared/types';
+import { isCore, procName } from './cores';
+import { CORE_INNER } from '../../shared/types';
 
-/** Executable names of proxy cores whose own traffic Clash already breaks down. */
-const CORE_NAMES = new Set(
-  [
-    'verge-mihomo.exe',
-    'verge-mihomo-alpha.exe',
-    'mihomo.exe',
-    'mihomo-alpha.exe',
-    'mihomo-windows-amd64.exe',
-    'clash.exe',
-    'clash-meta.exe',
-    'clash-meta-alpha.exe',
-    'FlClashCore.exe',
-    'sing-box.exe',
-  ].map((n) => n.toLowerCase()),
-);
 /** Ticks without ETW bytes on a ledger before Clash's unmatched bytes are booked. */
 const GRACE_TICKS = 5;
 /** Forget a process's ledgers after this long without activity. */
 const IDLE_FORGET_TICKS = 120;
-
-export function procName(exePath: string): string {
-  if (!exePath) return UNKNOWN_PROCESS;
-  return exePath.split(/[\\/]/).pop() || exePath;
-}
-
-export function isCore(name: string): boolean {
-  return CORE_NAMES.has(name.toLowerCase());
-}
 
 interface Volume {
   up: number;
@@ -150,6 +127,8 @@ function strip(d: ClashDelta): Delta {
 
 export class Reconciler {
   private procs = new Map<string, ProcState>();
+  /** Client name of the last Clash API seen, for labelling its core while the API is unreachable. */
+  private lastRoute = '';
 
   reset(): void {
     this.procs.clear();
@@ -165,7 +144,7 @@ export class Reconciler {
     const external = new Map<string, Delta>();
     for (const p of etw.procs) {
       const name = procName(p.path);
-      const d = external.get(name) ?? { proc: name, path: p.path, up: 0, down: 0, direct: 0, newConns: 0, hosts: [] };
+      const d = external.get(name) ?? { proc: name, path: p.path, up: 0, down: 0, direct: 0, route: '', newConns: 0, hosts: [] };
       d.up += p.up;
       d.down += p.down;
       d.hosts.push(...p.hosts);
@@ -175,10 +154,15 @@ export class Reconciler {
     if (!clash) {
       this.procs.clear();
       const out = this.attributeLocalProxies(external, etw.loops, proxyPorts, false);
-      for (const d of external.values()) out.push({ ...d, direct: d.up + d.down });
+      for (const d of external.values()) {
+        // What's left on a core (TUN upstream, DNS…) is still the core's own, not an app's
+        const proc = isCore(d.proc) ? CORE_INNER : d.proc;
+        out.push({ ...d, proc, path: proc === d.proc ? d.path : '', direct: d.up + d.down });
+      }
       return out;
     }
 
+    this.lastRoute = clash.route;
     for (const name of [...external.keys()]) if (isCore(name)) external.delete(name);
     const out = this.attributeLocalProxies(external, etw.loops, proxyPorts, true);
 
@@ -248,7 +232,7 @@ export class Reconciler {
 
       if (st.idle >= IDLE_FORGET_TICKS) this.procs.delete(name);
       if (up + down === 0 && proxied === 0 && newConns === 0) continue;
-      out.push({ proc: name, path: st.path, up, down, direct: up + down - proxied, newConns, hosts });
+      out.push({ proc: name, path: st.path, up, down, direct: up + down - proxied, route: clash.route, newConns, hosts });
     }
     return out;
   }
@@ -295,6 +279,7 @@ export class Reconciler {
           up,
           down,
           direct: 0,
+          route: (isCore(server) && this.lastRoute) || server.replace(/\.exe$/i, ''),
           newConns: 0,
           hosts: [[`经 ${server} 代理`, up + down]],
         });

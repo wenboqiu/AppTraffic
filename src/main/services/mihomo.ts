@@ -1,15 +1,13 @@
 /**
- * Minimal client for the mihomo (Clash Meta) REST API that Clash Verge Rev runs.
- * Prefers the named pipe Clash Verge always exposes; falls back to the HTTP
- * external-controller if one is configured.
+ * Minimal client for a Clash-compatible REST API (mihomo / Clash Meta, sing-box
+ * clash_api), over a named pipe or HTTP. discovery.ts finds the endpoint.
  */
 
 import http from 'http';
-import path from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { discover } from './discovery';
 
-const VERGE_DIR = path.join(process.env.APPDATA ?? '', 'io.github.clash-verge-rev.clash-verge-rev');
-const DEFAULT_PIPE = '\\\\.\\pipe\\verge-mihomo';
+/** Re-run discovery at most this often while no controller is reachable. */
+const REDISCOVER_MS = 10_000;
 
 export interface MihomoConnection {
   id: string;
@@ -17,11 +15,13 @@ export interface MihomoConnection {
   download: number;
   chains: string[];
   metadata: {
+    /** mihomo: "HTTP", "Tun", "Inner"…; sing-box: "<inbound type>/<tag>" */
     type: string;
     host: string;
     destinationIP: string;
-    process: string;
-    processPath: string;
+    /** mihomo only; sing-box reports processPath alone */
+    process?: string;
+    processPath?: string;
   };
 }
 
@@ -31,57 +31,23 @@ export interface ConnectionsResponse {
   connections: MihomoConnection[] | null;
 }
 
-type Endpoint =
-  | { kind: 'pipe'; socketPath: string }
-  | { kind: 'http'; host: string; port: number; secret: string };
-
-interface VergeConfig {
-  pipe: string;
-  controller: string;
+export type Endpoint = ({ kind: 'pipe'; socketPath: string } | { kind: 'http'; host: string; port: number }) & {
   secret: string;
-}
-
-function readVergeConfig(): VergeConfig {
-  const file = path.join(VERGE_DIR, 'clash-verge.yaml');
-  const cfg: VergeConfig = { pipe: DEFAULT_PIPE, controller: '', secret: '' };
-  if (!existsSync(file)) return cfg;
-  const text = readFileSync(file, 'utf8');
-  const field = (key: string) => {
-    const m = text.match(new RegExp(`^${key}:\\s*['"]?([^'"\\r\\n]*?)['"]?\\s*$`, 'm'));
-    return m ? m[1] : '';
-  };
-  cfg.pipe = field('external-controller-pipe') || DEFAULT_PIPE;
-  cfg.controller = field('external-controller');
-  cfg.secret = field('secret');
-  return cfg;
-}
-
-function candidateEndpoints(): Endpoint[] {
-  const cfg = readVergeConfig();
-  const list: Endpoint[] = [{ kind: 'pipe', socketPath: cfg.pipe }];
-  const m = cfg.controller.match(/^([^:]*):(\d+)$/);
-  if (m) {
-    const host = !m[1] || m[1] === '0.0.0.0' ? '127.0.0.1' : m[1];
-    list.push({ kind: 'http', host, port: Number(m[2]), secret: cfg.secret });
-  }
-  return list;
-}
+  /** GUI client that runs the core, e.g. "Clash Verge" */
+  client: string;
+};
 
 export function describeEndpoint(ep: Endpoint): string {
   return ep.kind === 'pipe' ? ep.socketPath : `http://${ep.host}:${ep.port}`;
 }
 
-function request<T>(ep: Endpoint, apiPath: string, timeoutMs = 3000): Promise<T> {
+export function request<T>(ep: Endpoint, apiPath: string, timeoutMs = 3000): Promise<T> {
   return new Promise((resolve, reject) => {
+    const headers = ep.secret ? { Authorization: `Bearer ${ep.secret}` } : {};
     const opts: http.RequestOptions =
       ep.kind === 'pipe'
-        ? { socketPath: ep.socketPath, path: apiPath }
-        : {
-            host: ep.host,
-            port: ep.port,
-            path: apiPath,
-            headers: ep.secret ? { Authorization: `Bearer ${ep.secret}` } : {},
-          };
+        ? { socketPath: ep.socketPath, path: apiPath, headers }
+        : { host: ep.host, port: ep.port, path: apiPath, headers };
     const req = http.get({ ...opts, timeout: timeoutMs }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -100,28 +66,44 @@ function request<T>(ep: Endpoint, apiPath: string, timeoutMs = 3000): Promise<T>
   });
 }
 
+export class NotDetectedError extends Error {
+  constructor() {
+    super('未检测到 Clash 兼容的代理');
+  }
+}
+
 export class MihomoClient {
   private endpoint: Endpoint | null = null;
+  private lastDiscovery = 0;
+  private discovering: Promise<void> | null = null;
   version: string | null = null;
 
   get endpointLabel(): string {
     return this.endpoint ? describeEndpoint(this.endpoint) : '';
   }
 
-  /** Find a working endpoint (re-read on every call so config changes are picked up). */
+  get client(): string | null {
+    return this.endpoint?.client ?? null;
+  }
+
+  /** Discovery is running and nothing has been found yet. */
+  get searching(): boolean {
+    return this.discovering !== null && !this.endpoint;
+  }
+
   private async connect(): Promise<Endpoint> {
-    let lastErr: unknown = new Error('no endpoint');
-    for (const ep of candidateEndpoints()) {
-      try {
-        const v = await request<{ version: string }>(ep, '/version');
-        this.endpoint = ep;
-        this.version = v.version;
-        return ep;
-      } catch (e) {
-        lastErr = e;
-      }
+    if (!this.discovering && Date.now() - this.lastDiscovery >= REDISCOVER_MS) {
+      this.lastDiscovery = Date.now();
+      this.discovering = discover()
+        .then((found) => {
+          this.endpoint = found?.endpoint ?? null;
+          this.version = found?.version ?? null;
+        })
+        .finally(() => (this.discovering = null));
     }
-    throw lastErr;
+    // Discovery spawns PowerShell and can take a second; don't hold up the tick for it
+    if (!this.endpoint) throw new NotDetectedError();
+    return this.endpoint;
   }
 
   async getConnections(): Promise<ConnectionsResponse> {
@@ -129,9 +111,10 @@ export class MihomoClient {
     try {
       return await request<ConnectionsResponse>(ep, '/connections');
     } catch (e) {
-      // Drop the cached endpoint so the next poll re-discovers (Clash restarted, port changed…)
+      // Drop the endpoint so the next poll re-discovers (core restarted, port changed, client switched…)
       this.endpoint = null;
       this.version = null;
+      this.lastDiscovery = 0;
       throw e;
     }
   }

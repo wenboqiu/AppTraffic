@@ -8,7 +8,8 @@ import { ClashSource } from './sources/clash';
 import { EtwSource } from './sources/etw';
 import { Reconciler } from './merge';
 import { systemProxyPorts } from './sysproxy';
-import type { TrafficSource } from './sources/types';
+import type { EtwSample, TrafficSource } from './sources/types';
+import { DIRECT } from '../../shared/types';
 import type { ProcRow, Range, Snapshot } from '../../shared/types';
 
 const POLL_MS = 1000;
@@ -26,6 +27,8 @@ let procSpeed = new Map<string, { up: number; down: number }>();
 let timer: NodeJS.Timeout | null = null;
 let saveTimer: NodeJS.Timeout | null = null;
 let busy = false;
+/** ETW samples held back while the proxy API is still being discovered. */
+let heldEtw: EtwSample | null = null;
 
 type TickListener = () => void;
 const listeners: TickListener[] = [];
@@ -66,8 +69,18 @@ async function tick(): Promise<void> {
   if (busy) return; // a slow request must not stack up overlapping polls
   busy = true;
   try {
-    const [c, e] = await Promise.all([settle(clash), settle(etw)]);
+    const [c, polled] = await Promise.all([settle(clash), settle(etw)]);
     const now = Date.now();
+    // Until discovery says whether a Clash API exists, ETW can't tell a core's bytes
+    // from an app's; hold them and reconcile together once it's known.
+    let e = polled;
+    if (e && clash.searching) {
+      heldEtw = heldEtw ? { procs: [...heldEtw.procs, ...e.procs], loops: [...heldEtw.loops, ...e.loops] } : e;
+      e = null;
+    } else if (heldEtw) {
+      e = { procs: [...heldEtw.procs, ...(e?.procs ?? [])], loops: [...heldEtw.loops, ...(e?.loops ?? [])] };
+      heldEtw = null;
+    }
     liveConns = c?.liveConns ?? new Map();
 
     if (!c && !e) {
@@ -109,13 +122,17 @@ async function tick(): Promise<void> {
 export function getSnapshot(range: Range): Snapshot {
   const agg = aggregate(range);
 
+  const routeTotals = new Map<string, number>();
   const procs: ProcRow[] = Object.entries(agg)
     .map(([name, s]) => ({
       name,
       path: s.path,
       up: s.up,
       down: s.down,
-      direct: s.direct,
+      direct: s.routes[DIRECT] ?? 0,
+      routes: Object.entries(s.routes)
+        .filter(([r]) => r !== DIRECT)
+        .sort((a, b) => b[1] - a[1]),
       conns: s.conns,
       liveConns: liveConns.get(name) ?? 0,
       speedUp: procSpeed.get(name)?.up ?? 0,
@@ -127,12 +144,15 @@ export function getSnapshot(range: Range): Snapshot {
     .filter((p) => p.up + p.down > 0 || p.liveConns > 0)
     .sort((a, b) => b.up + b.down - (a.up + a.down));
 
+  for (const p of procs) for (const [r, b] of p.routes) routeTotals.set(r, (routeTotals.get(r) ?? 0) + b);
+
   return {
     range,
     sources: sources.map((s) => s.status()),
     totalUp: procs.reduce((a, p) => a + p.up, 0),
     totalDown: procs.reduce((a, p) => a + p.down, 0),
     totalDirect: procs.reduce((a, p) => a + p.direct, 0),
+    routes: [...routeTotals].sort((a, b) => b[1] - a[1]),
     speedUp: speed.up,
     speedDown: speed.down,
     procs,
