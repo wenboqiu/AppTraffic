@@ -5,10 +5,9 @@
 
 import { addDelta, aggregate, earliestDay, saveStore } from './store';
 import { ClashSource } from './sources/clash';
-import { EtwSource } from './sources/etw';
 import { Reconciler } from './merge';
-import { systemProxyPorts } from './sysproxy';
-import type { EtwSample, TrafficSource } from './sources/types';
+import { platform } from '../platform';
+import type { SystemSample, TrafficSource } from './sources/types';
 import { DIRECT, TUNNEL } from '../../shared/types';
 import type { ProcRow, Range, Snapshot } from '../../shared/types';
 
@@ -17,8 +16,8 @@ const SAVE_EVERY_MS = 30_000;
 const TOP_HOSTS = 8;
 
 const clash = new ClashSource();
-const etw = new EtwSource();
-const sources: TrafficSource<unknown>[] = [clash, etw];
+const system = platform.createSystemSource();
+const sources: TrafficSource<unknown>[] = [clash, system];
 const reconciler = new Reconciler();
 let liveConns = new Map<string, number>();
 let lastTickAt = 0;
@@ -27,8 +26,8 @@ let procSpeed = new Map<string, { up: number; down: number }>();
 let timer: NodeJS.Timeout | null = null;
 let saveTimer: NodeJS.Timeout | null = null;
 let busy = false;
-/** ETW samples held back while the proxy API is still being discovered. */
-let heldEtw: EtwSample | null = null;
+/** System samples held back while the proxy API is still being discovered. */
+let heldSystem: SystemSample | null = null;
 
 type TickListener = () => void;
 const listeners: TickListener[] = [];
@@ -40,7 +39,7 @@ export function startCollector(): void {
   if (timer) return;
   timer = setInterval(tick, POLL_MS);
   saveTimer = setInterval(() => saveStore(), SAVE_EVERY_MS);
-  void etw.autoStart();
+  void system.autoStart();
   tick();
 }
 
@@ -51,13 +50,13 @@ export function stopCollector(): void {
   saveStore(true);
 }
 
-/** Run a source's button action (currently only "start the ETW helper"). */
+/** Run a source's button action (currently only enabling / disabling system-wide statistics). */
 export async function runSourceAction(id: string): Promise<void> {
-  if (id === etw.id) await etw.toggle();
+  if (id === system.id) await system.toggle();
   listeners.forEach((fn) => fn());
 }
 
-function joinEtw(a: EtwSample, b: EtwSample): EtwSample {
+function joinSamples(a: SystemSample, b: SystemSample): SystemSample {
   return { procs: [...a.procs, ...b.procs], loops: [...a.loops, ...b.loops], ifaces: [...a.ifaces, ...b.ifaces] };
 }
 
@@ -74,17 +73,17 @@ async function tick(): Promise<void> {
   if (busy) return; // a slow request must not stack up overlapping polls
   busy = true;
   try {
-    const [c, polled] = await Promise.all([settle(clash), settle(etw)]);
+    const [c, polled] = await Promise.all([settle(clash), settle(system)]);
     const now = Date.now();
-    // Until discovery says whether a Clash API exists, ETW can't tell a core's bytes
+    // Until discovery says whether a Clash API exists, a core's bytes can't be told
     // from an app's; hold them and reconcile together once it's known.
     let e = polled;
     if (e && clash.searching) {
-      heldEtw = heldEtw ? joinEtw(heldEtw, e) : e;
+      heldSystem = heldSystem ? joinSamples(heldSystem, e) : e;
       e = null;
-    } else if (heldEtw) {
-      e = e ? joinEtw(heldEtw, e) : heldEtw;
-      heldEtw = null;
+    } else if (heldSystem) {
+      e = e ? joinSamples(heldSystem, e) : heldSystem;
+      heldSystem = null;
     }
     liveConns = c?.liveConns ?? new Map();
 
@@ -100,7 +99,7 @@ async function tick(): Promise<void> {
     // Overall speed leaves out VPN carrier traffic, which repeats bytes already counted
     let tickUp = 0;
     let tickDown = 0;
-    for (const d of reconciler.merge(c, e, systemProxyPorts())) {
+    for (const d of reconciler.merge(c, e, platform.systemProxyPorts())) {
       addDelta(d);
       const s = tickSpeed.get(d.proc) ?? { up: 0, down: 0 };
       s.up += d.up;

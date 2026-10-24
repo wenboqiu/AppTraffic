@@ -10,7 +10,7 @@ import net from 'net';
 import path from 'path';
 import { existsSync } from 'fs';
 import type { SourceStatus } from '../../../shared/types';
-import { getSettings, updateSettings } from '../settings';
+import { getSettings, updateSettings } from '../../services/settings';
 import {
   isProtectedPath,
   registerAndRunTask,
@@ -19,8 +19,8 @@ import {
   samePath,
   taskExecutable,
   unregisterTask,
-} from '../elevate';
-import type { EtwIface, EtwLoop, EtwProc, EtwSample, TrafficSource } from './types';
+} from './elevate';
+import type { SysIface, SysLoop, SysProc, SystemSample, SystemSource } from '../../services/sources/types';
 
 const PIPE = '\\\\.\\pipe\\apptraffic-etw';
 const EXE = 'traffic-etw.exe';
@@ -30,9 +30,9 @@ const SILENCE_MS = 6000;
 const START_GRACE_MS = 15_000;
 
 interface Line {
-  procs?: EtwProc[];
-  loops?: EtwLoop[];
-  ifaces?: EtwIface[];
+  procs?: SysProc[];
+  loops?: SysLoop[];
+  ifaces?: SysIface[];
 }
 
 export function helperPath(): string {
@@ -41,16 +41,16 @@ export function helperPath(): string {
     : path.join(app.getAppPath(), 'native', 'target', 'release', EXE);
 }
 
-export class EtwSource implements TrafficSource<EtwSample> {
-  readonly id = 'etw';
+export class EtwSource implements SystemSource {
+  readonly id = 'system';
   private sock: net.Socket | null = null;
   private ready = false;
   private lastLineAt = 0;
   private buf = '';
-  private procs = new Map<string, EtwProc>();
-  private loops = new Map<string, EtwLoop>();
+  private procs = new Map<string, SysProc>();
+  private loops = new Map<string, SysLoop>();
   /** Latest description of every interface seen (index -> info) */
-  private ifaces = new Map<number, EtwIface>();
+  private ifaces = new Map<number, SysIface>();
   /** The user wants system-wide statistics (persisted). */
   private enabled = getSettings().etwEnabled;
   /** Waiting on a UAC prompt or a scheduled-task start */
@@ -60,13 +60,13 @@ export class EtwSource implements TrafficSource<EtwSample> {
   private launchedAt = 0;
   private lastError: string | null = null;
 
-  async poll(): Promise<EtwSample> {
+  async poll(): Promise<SystemSample> {
     if (this.ready && Date.now() - this.lastLineAt > SILENCE_MS) this.drop();
     if (!this.ready) {
       if (this.enabled) this.connect();
       throw new Error('helper not connected');
     }
-    const sample: EtwSample = {
+    const sample: SystemSample = {
       procs: [...this.procs.values()],
       loops: [...this.loops.values()],
       ifaces: [...this.ifaces.values()],
@@ -192,7 +192,7 @@ export class EtwSource implements TrafficSource<EtwSample> {
     }
   }
 
-  private addProc(p: EtwProc): void {
+  private addProc(p: SysProc): void {
     const acc = this.procs.get(p.path);
     if (!acc) {
       this.procs.set(p.path, { ...p, hosts: [...p.hosts], ifs: (p.ifs ?? []).map((f) => [...f]) });
@@ -212,7 +212,7 @@ export class EtwSource implements TrafficSource<EtwSample> {
     }
   }
 
-  private addLoop(l: EtwLoop): void {
+  private addLoop(l: SysLoop): void {
     const key = `${l.client}\0${l.server}\0${l.port}`;
     const acc = this.loops.get(key);
     if (!acc) {

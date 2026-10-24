@@ -24,8 +24,8 @@
  */
 
 import type { Delta } from './store';
-import type { ClashDelta, ClashSample, EtwLoop, EtwSample } from './sources/types';
-import { isCore, isVpnClient, procName } from './cores';
+import type { ClashDelta, ClashSample, SysLoop, SystemSample } from './sources/types';
+import { isCore, isVpnClient, procName, stem } from './cores';
 import { CORE_INNER, TUNNEL, VPN_ROUTE_PREFIX } from '../../shared/types';
 
 /** Adapter names a Clash-compatible core gives its TUN device. */
@@ -35,7 +35,7 @@ const CLASH_TUN_HINT = /mihomo|clash|sing-?box|\bmeta\b/i;
  * VPN adapters by interface index -> alias. A Clash core's own TUN adapter is left
  * out while its API is reachable: Clash's connection list says what went through it.
  */
-function vpnAdapters(etw: EtwSample, clash: ClashSample | null): Map<number, string> {
+function vpnAdapters(etw: SystemSample, clash: ClashSample | null): Map<number, string> {
   const out = new Map<number, string>();
   const tun = clash?.tunDevice?.toLowerCase();
   for (const f of etw.ifaces) {
@@ -156,7 +156,7 @@ export class Reconciler {
     this.procs.clear();
   }
 
-  merge(clash: ClashSample | null, etw: EtwSample | null, proxyPorts: Set<number>): Delta[] {
+  merge(clash: ClashSample | null, etw: SystemSample | null, proxyPorts: Set<number>): Delta[] {
     if (!etw) {
       this.procs.clear();
       return clash ? clash.deltas.map(strip) : [];
@@ -299,11 +299,11 @@ export class Reconciler {
    */
   private attributeLocalProxies(
     external: Map<string, Delta>,
-    loops: EtwLoop[],
+    loops: SysLoop[],
     proxyPorts: Set<number>,
     clashUp: boolean,
   ): Delta[] {
-    const byServer = new Map<string, EtwLoop[]>();
+    const byServer = new Map<string, SysLoop[]>();
     for (const l of loops) {
       if (!proxyPorts.has(l.port)) continue;
       const server = procName(l.server);
@@ -334,7 +334,7 @@ export class Reconciler {
           up,
           down,
           direct: 0,
-          route: (isCore(server) && this.lastRoute) || server.replace(/\.exe$/i, ''),
+          route: (isCore(server) && this.lastRoute) || stem(server),
           newConns: 0,
           hosts: [[`经 ${server} 代理`, up + down]],
         });

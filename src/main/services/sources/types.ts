@@ -42,7 +42,9 @@ export interface ClashSample {
   liveConns: Map<string, number>;
 }
 
-export interface EtwProc {
+// ── System-wide per-process counters (Windows: ETW; macOS: nettop) ──
+
+export interface SysProc {
   /** Executable path; '' when the process couldn't be opened. */
   path: string;
   up: number;
@@ -52,7 +54,7 @@ export interface EtwProc {
   ifs?: [number, number, number][];
 }
 
-export interface EtwIface {
+export interface SysIface {
   index: number;
   /** "WLAN", "wg-home"… */
   alias: string;
@@ -62,7 +64,7 @@ export interface EtwIface {
 }
 
 /** Loopback TCP from `client` to the process listening on `port`. */
-export interface EtwLoop {
+export interface SysLoop {
   client: string;
   server: string;
   port: number;
@@ -72,9 +74,17 @@ export interface EtwLoop {
   down: number;
 }
 
-export interface EtwSample {
-  procs: EtwProc[];
-  loops: EtwLoop[];
+export interface SystemSample {
+  procs: SysProc[];
+  loops: SysLoop[];
   /** Interfaces referenced by procs[].ifs */
-  ifaces: EtwIface[];
+  ifaces: SysIface[];
+}
+
+/** The platform's system-wide source; it may need the user to turn it on. */
+export interface SystemSource extends TrafficSource<SystemSample> {
+  /** On app start: resume if the user enabled it before, without prompting. */
+  autoStart(): Promise<void>;
+  /** The source's status button (enable / disable). */
+  toggle(): Promise<void>;
 }

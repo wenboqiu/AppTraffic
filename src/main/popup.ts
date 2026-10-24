@@ -1,6 +1,7 @@
 /**
  * Manages the borderless popup window that appears when the tray icon is clicked.
- * Positions itself above the tray icon and hides on focus loss.
+ * Positions itself next to the tray icon (above a bottom taskbar, below a top
+ * taskbar or the macOS menu bar) and hides on focus loss.
  */
 
 import { BrowserWindow, screen, Tray, shell } from 'electron';
@@ -13,6 +14,8 @@ const MIN_HEIGHT = 200;
 let popup: BrowserWindow | null = null;
 let currentHeight = POPUP_HEIGHT;
 let visible = false;
+/** Tray sits at the top of the screen: grow downwards from there */
+let anchorTop = false;
 
 export function createPopupWindow(preloadPath: string): BrowserWindow {
   popup = new BrowserWindow({
@@ -101,10 +104,11 @@ function positionNearTray(tray: Tray): void {
   const trayBounds = tray.getBounds();
   const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
   const workArea = display.workArea;
+  anchorTop = trayBounds.y < display.bounds.y + display.bounds.height / 2;
 
-  // Center horizontally over the tray icon, flush with taskbar top
+  // Center horizontally on the tray icon, flush with the taskbar / menu bar
   let x = Math.round(trayBounds.x + trayBounds.width / 2 - POPUP_WIDTH / 2);
-  const y = workArea.y + workArea.height - currentHeight - 4;
+  const y = verticalPosition(workArea, currentHeight);
 
   // Clamp so the window doesn't go off-screen
   x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - POPUP_WIDTH));
@@ -112,9 +116,13 @@ function positionNearTray(tray: Tray): void {
   popup.setBounds({ x, y, width: POPUP_WIDTH, height: currentHeight });
 }
 
+function verticalPosition(workArea: Electron.Rectangle, height: number): number {
+  return anchorTop ? workArea.y + 4 : workArea.y + workArea.height - height - 4;
+}
+
 /**
  * Resize the popup to fit its content height (reported by the renderer),
- * keeping it bottom-anchored above the tray. Clamped to the screen.
+ * keeping it anchored at the tray's edge of the screen. Clamped to the screen.
  */
 export function setPopupHeight(height: number): void {
   if (!popup) return;
@@ -126,6 +134,6 @@ export function setPopupHeight(height: number): void {
   if (h === currentHeight) return;
 
   currentHeight = h;
-  const y = workArea.y + workArea.height - h - 4;
+  const y = verticalPosition(workArea, h);
   popup.setBounds({ x, y, width: POPUP_WIDTH, height: h });
 }

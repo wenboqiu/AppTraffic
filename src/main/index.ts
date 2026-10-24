@@ -16,7 +16,8 @@ if (!app.requestSingleInstanceLock()) {
 let tray: Tray | null = null;
 
 app.whenReady().then(() => {
-  app.setAppUserModelId('me.xueshi.apptraffic');
+  // Groups notifications / taskbar entries under the app (Windows only)
+  if (process.platform === 'win32') app.setAppUserModelId('me.xueshi.apptraffic');
 
   importLegacyStore();
   loadStore();

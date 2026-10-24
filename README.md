@@ -49,6 +49,19 @@ Windows 托盘小工具：按应用统计上网流量，并区分**直连 / 经�
 - WireGuard 内核驱动的外层流量可能记在 System 名下，不会被识别为 VPN 隧道
 - 不在内置名单里的 VPN 客户端，其外层流量会与应用流量重复计入
 
+## 平台
+
+和操作系统相关的部分都在 `src/main/platform/`，其余代码只通过 `Platform` 接口（`platform/types.ts`）使用：
+
+| | Windows（`win32/`） | macOS（`darwin/`，待实现） |
+|---|---|---|
+| 查内核进程（父进程、命令行） | WMI（PowerShell） | `ps` + `sysctl KERN_PROCARGS2` |
+| 已知客户端配置 / 本地 socket | Clash Verge 配置、`\\.\pipe\*` | `~/Library/Application Support/…`、Unix socket |
+| 系统代理端口 | 注册表 Internet Settings | `scutil --proxy` |
+| 系统流量 | ETW 助手 `traffic-etw.exe` + 计划任务 | `nettop`（无需 root；按连接模式带网卡名，`utunN` 即 VPN） |
+
+macOS 目前是占位实现：能运行，但还发现不了代理，系统流量显示「尚未实现」。各函数要做的事写在 `platform/darwin/index.ts` 的注释里。
+
 ## 开发
 
 ```bash

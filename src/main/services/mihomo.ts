@@ -1,6 +1,7 @@
 /**
  * Minimal client for a Clash-compatible REST API (mihomo / Clash Meta, sing-box
- * clash_api), over a named pipe or HTTP. discovery.ts finds the endpoint.
+ * clash_api), over a local socket (Windows named pipe / Unix socket) or HTTP.
+ * discovery.ts finds the endpoint.
  */
 
 import http from 'http';
@@ -33,21 +34,21 @@ export interface ConnectionsResponse {
   connections: MihomoConnection[] | null;
 }
 
-export type Endpoint = ({ kind: 'pipe'; socketPath: string } | { kind: 'http'; host: string; port: number }) & {
+export type Endpoint = ({ kind: 'socket'; socketPath: string } | { kind: 'http'; host: string; port: number }) & {
   secret: string;
   /** GUI client that runs the core, e.g. "Clash Verge" */
   client: string;
 };
 
 export function describeEndpoint(ep: Endpoint): string {
-  return ep.kind === 'pipe' ? ep.socketPath : `http://${ep.host}:${ep.port}`;
+  return ep.kind === 'socket' ? ep.socketPath : `http://${ep.host}:${ep.port}`;
 }
 
 export function request<T>(ep: Endpoint, apiPath: string, timeoutMs = 3000): Promise<T> {
   return new Promise((resolve, reject) => {
     const headers = ep.secret ? { Authorization: `Bearer ${ep.secret}` } : {};
     const opts: http.RequestOptions =
-      ep.kind === 'pipe'
+      ep.kind === 'socket'
         ? { socketPath: ep.socketPath, path: apiPath, headers }
         : { host: ep.host, port: ep.port, path: apiPath, headers };
     const req = http.get({ ...opts, timeout: timeoutMs }, (res) => {
