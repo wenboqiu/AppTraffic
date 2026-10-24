@@ -12,11 +12,11 @@
  * Every candidate is confirmed with GET /version before use.
  */
 
-import { execFile } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { CORE_NAMES, clientLabel } from './cores';
 import { request, type Endpoint } from './mihomo';
+import { runPowerShell } from './elevate';
 
 const VERGE_DIR = path.join(process.env.APPDATA ?? '', 'io.github.clash-verge-rev.clash-verge-rev');
 const PIPE_HINT = /mihomo|clash|verge|sing-?box|sparkle|party/i;
@@ -34,18 +34,6 @@ interface ControllerConfig {
   controller?: string;
   pipe?: string;
   secret?: string;
-}
-
-function runPowerShell(script: string): Promise<string> {
-  const encoded = Buffer.from(`[Console]::OutputEncoding = [Text.Encoding]::UTF8\n${script}`, 'utf16le').toString('base64');
-  return new Promise((resolve, reject) => {
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-      { windowsHide: true, timeout: 15_000, maxBuffer: 4 * 1024 * 1024 },
-      (err, stdout) => (err ? reject(err) : resolve(stdout)),
-    );
-  });
 }
 
 async function listCores(): Promise<CoreProc[]> {

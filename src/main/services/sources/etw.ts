@@ -2,21 +2,32 @@
  * Traffic source backed by traffic-etw.exe, an elevated helper that counts every
  * process's TCP/UDP bytes via ETW and streams per-second deltas over a named pipe.
  * The helper exits by itself ~30 s after its last client disconnects, so all this
- * side does is start it (one UAC prompt) and keep reading.
+ * side does is start it (see elevate.ts) and keep reading.
  */
 
 import { app } from 'electron';
 import net from 'net';
 import path from 'path';
 import { existsSync } from 'fs';
-import { execFile } from 'child_process';
 import type { SourceStatus } from '../../../shared/types';
+import { getSettings, updateSettings } from '../settings';
+import {
+  isProtectedPath,
+  registerAndRunTask,
+  runElevated,
+  runTask,
+  samePath,
+  taskExecutable,
+  unregisterTask,
+} from '../elevate';
 import type { EtwIface, EtwLoop, EtwProc, EtwSample, TrafficSource } from './types';
 
 const PIPE = '\\\\.\\pipe\\apptraffic-etw';
 const EXE = 'traffic-etw.exe';
 /** No line (not even the 2 s keep-alive) for this long means the helper is gone. */
 const SILENCE_MS = 6000;
+/** After launching, how long "starting" is shown before it counts as failed. */
+const START_GRACE_MS = 15_000;
 
 interface Line {
   procs?: EtwProc[];
@@ -40,13 +51,19 @@ export class EtwSource implements TrafficSource<EtwSample> {
   private loops = new Map<string, EtwLoop>();
   /** Latest description of every interface seen (index -> info) */
   private ifaces = new Map<number, EtwIface>();
-  private starting = false;
+  /** The user wants system-wide statistics (persisted). */
+  private enabled = getSettings().etwEnabled;
+  /** Waiting on a UAC prompt or a scheduled-task start */
+  private busy = false;
+  /** A UAC prompt is (about to be) on screen */
+  private prompting = false;
+  private launchedAt = 0;
   private lastError: string | null = null;
 
   async poll(): Promise<EtwSample> {
     if (this.ready && Date.now() - this.lastLineAt > SILENCE_MS) this.drop();
     if (!this.ready) {
-      this.connect();
+      if (this.enabled) this.connect();
       throw new Error('helper not connected');
     }
     const sample: EtwSample = {
@@ -64,26 +81,77 @@ export class EtwSource implements TrafficSource<EtwSample> {
     this.loops.clear();
   }
 
-  /** Launch the helper elevated. Resolves once the UAC prompt is answered. */
-  start(): Promise<void> {
+  /** On app start: bring the helper back if the user enabled it, without prompting. */
+  async autoStart(): Promise<void> {
+    if (this.enabled) await this.launch(false);
+  }
+
+  /** The source's button: enable (may prompt for UAC once) or disable. */
+  async toggle(): Promise<void> {
+    if (this.busy) return;
+    if (this.enabled && (this.ready || this.starting())) await this.disable();
+    else await this.launch(true);
+  }
+
+  private starting(): boolean {
+    return this.busy || (this.enabled && Date.now() - this.launchedAt < START_GRACE_MS);
+  }
+
+  /**
+   * Start the helper: silently through the scheduled task when it exists and points
+   * at this helper; otherwise (interactive only) register the task with one UAC
+   * prompt, or for an unprotected helper path just run it elevated.
+   */
+  private async launch(interactive: boolean): Promise<void> {
     const exe = helperPath();
     if (!existsSync(exe)) {
       this.lastError = `找不到 ${EXE}`;
-      return Promise.resolve();
+      return;
     }
-    if (this.starting || this.ready) return Promise.resolve();
-    this.starting = true;
+    this.busy = true;
     this.lastError = null;
-    // Start-Process -Verb RunAs is the shell's "run as administrator"; it fails
-    // (exit code 1) when the user declines the UAC prompt.
-    const cmd = `Start-Process -FilePath '${exe.replace(/'/g, "''")}' -Verb RunAs`;
-    return new Promise((resolve) => {
-      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true }, (err) => {
-        this.starting = false;
-        if (err) this.lastError = '未获得管理员授权，系统流量统计未启动';
-        resolve();
-      });
-    });
+    try {
+      let ok = false;
+      if (isProtectedPath(exe)) {
+        const current = await taskExecutable();
+        ok = !!current && samePath(current, exe) && (await runTask());
+        // Missing, or left over from an install elsewhere: (re)register it
+        if (!ok && interactive) {
+          this.prompting = true;
+          ok = await registerAndRunTask(exe);
+        }
+      } else if (interactive) {
+        this.prompting = true;
+        ok = await runElevated(exe, [], false);
+      }
+      if (ok) {
+        this.enabled = true;
+        this.launchedAt = Date.now();
+        updateSettings({ etwEnabled: true });
+      } else if (interactive) {
+        this.lastError = '未获得管理员授权，系统流量统计未启动';
+      }
+    } finally {
+      this.busy = this.prompting = false;
+    }
+  }
+
+  /** Stop collecting and remove the scheduled task (one UAC prompt if it exists). */
+  private async disable(): Promise<void> {
+    this.busy = true;
+    try {
+      this.enabled = false;
+      updateSettings({ etwEnabled: false });
+      // The helper exits on its own once nobody is connected
+      this.drop();
+      this.reset();
+      if (await taskExecutable()) {
+        this.prompting = true;
+        await unregisterTask();
+      }
+    } finally {
+      this.busy = this.prompting = false;
+    }
   }
 
   private connect(): void {
@@ -157,9 +225,11 @@ export class EtwSource implements TrafficSource<EtwSample> {
 
   status(): SourceStatus {
     const base = { id: this.id, label: '系统流量' };
-    if (this.ready) return { ...base, state: 'on', detail: '已启用', action: null };
-    if (this.starting) return { ...base, state: 'off', detail: '等待管理员授权…', action: null };
+    if (this.ready) return { ...base, state: 'on', detail: '已启用', action: '停用' };
+    if (this.prompting) return { ...base, state: 'off', detail: '请在管理员授权窗口中确认…', action: null };
+    if (this.starting()) return { ...base, state: 'off', detail: '正在启动…', action: null };
     if (this.lastError) return { ...base, state: 'error', detail: this.lastError, action: '启用' };
+    if (this.enabled) return { ...base, state: 'error', detail: '采集程序未运行', action: '启用' };
     return { ...base, state: 'off', detail: '未启用：按应用统计全部流量需要管理员授权', action: '启用' };
   }
 }

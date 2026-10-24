@@ -40,6 +40,7 @@ export function startCollector(): void {
   if (timer) return;
   timer = setInterval(tick, POLL_MS);
   saveTimer = setInterval(() => saveStore(), SAVE_EVERY_MS);
+  void etw.autoStart();
   tick();
 }
 
@@ -52,7 +53,7 @@ export function stopCollector(): void {
 
 /** Run a source's button action (currently only "start the ETW helper"). */
 export async function runSourceAction(id: string): Promise<void> {
-  if (id === etw.id) await etw.start();
+  if (id === etw.id) await etw.toggle();
   listeners.forEach((fn) => fn());
 }
 
