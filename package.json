@@ -1,14 +1,15 @@
 {
-  "name": "clash-traffic",
+  "name": "app-traffic",
   "version": "1.0.0",
-  "description": "ClashTraffic — 按应用统计经过 Clash Verge 的流量",
+  "description": "AppTraffic — 按应用统计上网流量，区分直连、代理与 VPN",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build:native && npm run build && electron-builder",
+    "build:native": "cargo build --release --manifest-path native/Cargo.toml"
   },
   "dependencies": {},
   "devDependencies": {
@@ -25,8 +26,8 @@
     "vite": "^5.3.1"
   },
   "build": {
-    "appId": "me.xueshi.clashtraffic.win",
-    "productName": "ClashTraffic",
+    "appId": "me.xueshi.apptraffic.win",
+    "productName": "AppTraffic",
     "directories": {
       "buildResources": "resources",
       "output": "dist"
@@ -48,15 +49,22 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": false
+      "createDesktopShortcut": false,
+      "include": "resources/installer.nsh",
+      "perMachine": true
     },
     "extraResources": [
       {
         "from": "resources",
         "to": "resources",
         "filter": [
-          "**/*"
+          "**/*",
+          "!installer.nsh"
         ]
+      },
+      {
+        "from": "native/target/release/traffic-etw.exe",
+        "to": "traffic-etw.exe"
       }
     ]
   },

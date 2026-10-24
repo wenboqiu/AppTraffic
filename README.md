@@ -1,40 +1,63 @@
-# ClashTraffic
+# AppTraffic
 
-Windows 托盘小工具：按应用统计经过 Clash Verge (Rev) 的流量。点击托盘图标弹出详情，悬停显示今日总量和实时速度。
+Windows 托盘小工具：按应用统计上网流量，并区分**直连 / 经代理 / 经 VPN**。点击托盘图标弹出详情，悬停显示今日总量和实时速度。
+
+（前身是只统计 Clash Verge 流量的 ClashTraffic。）
 
 ## 功能
 
-- 按进程累计上传 / 下载，区分走代理和直连
-- 今天 / 7 天 / 30 天 / 全部 切换
+- 按进程累计上传 / 下载；今天 / 7 天 / 30 天 / 全部
+- 每个应用的流量拆成路线：直连、经某个代理客户端（Clash Verge、Mihomo Party、v2rayN…）、经某个 VPN 网卡
 - 实时速度（总体 + 每个应用）
-- 点开某个应用：exe 路径（点击在资源管理器中定位）、累计连接数、访问最多的域名
+- 点开某个应用：exe 路径（点击在资源管理器中定位）、连接数、访问最多的域名
 - 右键菜单：开机自启、打开数据目录、退出
 
-## 原理
+## 数据源
 
-Clash Verge Rev 的内核 mihomo 会在命名管道 `\\.\pipe\verge-mihomo` 上提供 REST API。`/connections` 返回当前所有连接，每条带进程名（`find-process-mode`）、目标域名、出站链路和该连接累计的字节数。
+| 数据源 | 作用 | 需要 |
+|---|---|---|
+| **系统流量**（ETW） | 所有应用的真实收发字节、对端主机、所走网卡 | 管理员授权（界面上点「启用」） |
+| **代理**（Clash 兼容 API） | 每条连接走了哪个节点 / DIRECT、目标域名 | 自动发现，无需配置 |
 
-本工具每秒轮询一次，记住每个连接上一次的读数，只累加差值，按 `日期 → 进程` 写入
-`%APPDATA%\clash-traffic\traffic.json`，保留 90 天。
+两者都可单独工作；同时可用时互相对账，每个字节只记一次。
 
-- 两次轮询之间就开就关的短连接，以及连接关闭前最后不到 1 秒的流量，会用内核的全局计数补差，记为 `(短连接/未归属)`
-- 内核自己发起的连接（DNS 上游等）记为 `(Clash 内核 · DNS 等)`
-- 启动或重连 Clash 后的第一次读数只作为基线，不会把已有连接的历史流量重复计入
+### 系统流量（ETW）
 
-如果命名管道连接不上，会退回到 `clash-verge.yaml` 里配置的 `external-controller`（HTTP + secret）。
+`traffic-etw.exe`（Rust）以管理员身份订阅 Microsoft-Windows-Kernel-Network（TCP/UDP 收发）、DNS-Client（把 IP 还原成域名）和 Kernel-Process（进程启动时记下 exe 路径，短命进程也能归属），每秒把各进程的增量通过命名管道 `\\.\pipe\apptraffic-etw` 推给托盘程序。托盘程序断开 30 秒后它自行退出。
+
+- 回环流量（应用 → 本机代理端口）不算上网流量，但会上报「谁连了哪个本地端口」，用来把代理的出网流量归还给应用
+- 按本机地址判断流量走的网卡；VPN 网卡上的流量记为「VPN · 网卡名」，VPN 客户端自身的加密外层流量记为「VPN 隧道」，不计入总量
+
+**启用方式**：第一次点「启用」弹一次 UAC，注册计划任务 `\AppTraffic\ETW Collector`（最高权限、仅当前用户可运行），之后启动 AppTraffic 时静默拉起采集程序。点「停用」或卸载时删除该任务。计划任务只会指向 Program Files 里的 `traffic-etw.exe`（普通用户无法替换）；装在别处时退回为每次启用都弹 UAC。
+
+### 代理（Clash 兼容 API）
+
+从正在运行的内核进程（mihomo / Clash Meta / sing-box）的命令行和配置文件里找出控制接口（命名管道或 HTTP + secret），用 `/version` 确认；客户端名称取自启动内核的父进程。`/connections` 每秒轮询一次，按连接累计差值。
+
+- 系统代理 / SOCKS：应用连到内核端口的回环字节（ETW）定量，Clash 给出代理与直连的比例和域名
+- TUN：应用在 TUN 网卡上的字节（ETW）定量，Clash 给出比例；内核自身的出网流量剔除
+- 没有 ETW 时退回纯 Clash 统计，两次轮询之间的短连接记为 `(短连接/未归属)`
+- 没有 Clash API 的本地代理（如 xray）：按各应用连到系统代理端口的回环流量，分摊代理进程的出网流量
+
+## 数据
+
+`%APPDATA%\app-traffic\traffic.json`，按 `日期 → 进程 → 路线` 记录，保留 90 天。首次启动会复制旧版 ClashTraffic 的数据（`%APPDATA%\clash-traffic`，原文件不动）。
 
 ## 限制
 
-- 只统计经过 Clash 的流量。没开 TUN 时，不走系统代理的程序看不到
-- 只统计本工具运行期间的流量，建议开启「开机自启」
-- 进程识别依赖内核的 `find-process-mode`（Clash Verge Rev 默认开启）
+- 只统计 AppTraffic 运行期间的流量，建议开启「开机自启」
+- WireGuard 内核驱动的外层流量可能记在 System 名下，不会被识别为 VPN 隧道
+- 不在内置名单里的 VPN 客户端，其外层流量会与应用流量重复计入
 
 ## 开发
 
 ```bash
 npm install
-npm run dev        # 开发模式
+npm run dev            # 开发模式
 npm run typecheck
-npm run dist       # 打包 NSIS 安装包到 dist/
+npm run build:native   # 编译 traffic-etw.exe（需要 Rust）
+npm run dist           # 编译助手 + 打包 NSIS 安装包到 dist/
 node scripts/gen-icon.js   # 重新生成图标
+
+native/target/release/traffic-etw.exe --list-ifaces out.json   # 查看网卡及 VPN 判定（无需管理员）
 ```

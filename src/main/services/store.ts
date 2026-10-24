@@ -24,6 +24,18 @@ export function dayKey(d = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/**
+ * First run after the rename from ClashTraffic: copy its history over. The old
+ * file is left in place, so ClashTraffic keeps working until it's uninstalled.
+ */
+export function importLegacyStore(): void {
+  const target = storePath();
+  const legacy = path.join(app.getPath('appData'), 'clash-traffic', 'traffic.json');
+  if (existsSync(target) || !existsSync(legacy)) return;
+  mkdirSync(path.dirname(target), { recursive: true });
+  copyFileSync(legacy, target);
+}
+
 export function loadStore(): void {
   const file = storePath();
   if (!existsSync(file)) return;
@@ -50,7 +62,7 @@ interface ProcStatV1 {
   hosts: Record<string, number>;
 }
 
-/** v1 (ClashTraffic) kept a single direct counter; everything else went through Clash Verge. */
+/** v1 (ClashTraffic, the app's former name) kept a single direct counter; everything else went through Clash Verge. */
 function migrateV1(v1: { days: Record<string, Record<string, ProcStatV1>> }): StoreFile {
   const days: Record<string, DayData> = {};
   for (const [k, day] of Object.entries(v1.days)) {

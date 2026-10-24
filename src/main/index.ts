@@ -4,7 +4,7 @@ import { existsSync } from 'fs';
 import { createPopupWindow, togglePopup, isPopupVisible } from './popup';
 import { registerIpcHandlers, pushSnapshot } from './ipc';
 import { startCollector, stopCollector, onTick, getSnapshot } from './services/collector';
-import { loadStore, storePath } from './services/store';
+import { importLegacyStore, loadStore, storePath } from './services/store';
 import { fmtBytes, fmtSpeed } from '../shared/format';
 
 // Single-instance lock
@@ -16,8 +16,9 @@ if (!app.requestSingleInstanceLock()) {
 let tray: Tray | null = null;
 
 app.whenReady().then(() => {
-  app.setAppUserModelId('me.xueshi.clashtraffic');
+  app.setAppUserModelId('me.xueshi.apptraffic');
 
+  importLegacyStore();
   loadStore();
   registerIpcHandlers();
 
@@ -31,7 +32,7 @@ app.whenReady().then(() => {
   }
 
   tray = new Tray(loadTrayIcon());
-  tray.setToolTip('ClashTraffic');
+  tray.setToolTip('AppTraffic');
   updateTrayMenu(tray);
 
   tray.on('click', () => togglePopup(tray!));
@@ -59,8 +60,8 @@ function updateTooltip(): void {
   if (!tray) return;
   const s = getSnapshot('today');
   const text = s.sources.some((src) => src.state === 'on')
-    ? `ClashTraffic\n今日 ↓${fmtBytes(s.totalDown)} ↑${fmtBytes(s.totalUp)}\n实时 ↓${fmtSpeed(s.speedDown)} ↑${fmtSpeed(s.speedUp)}`
-    : 'ClashTraffic\n未在统计：系统流量未启用，也未检测到代理';
+    ? `AppTraffic\n今日 ↓${fmtBytes(s.totalDown)} ↑${fmtBytes(s.totalUp)}\n实时 ↓${fmtSpeed(s.speedDown)} ↑${fmtSpeed(s.speedUp)}`
+    : 'AppTraffic\n未在统计：系统流量未启用，也未检测到代理';
   if (text !== lastTooltip) {
     tray.setToolTip(text);
     lastTooltip = text;
@@ -70,7 +71,7 @@ function updateTooltip(): void {
 function updateTrayMenu(t: Tray): void {
   const menu = Menu.buildFromTemplate([
     {
-      label: '打开 ClashTraffic',
+      label: '打开 AppTraffic',
       click: () => {
         if (!isPopupVisible()) togglePopup(t);
       },
