@@ -31,11 +31,12 @@
     "productName": "AppTraffic",
     "directories": {
       "buildResources": "resources",
-      "output": "dist"
+      "output": "dist/.build"
     },
     "files": [
       "out/**/*"
     ],
+    "afterAllArtifactBuild": "scripts/collect-dist.js",
     "win": {
       "target": [
         {
@@ -59,7 +60,8 @@
           "from": "native/target/release/traffic-etw.exe",
           "to": "traffic-etw.exe"
         }
-      ]
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -94,7 +96,8 @@
             "icon.png"
           ]
         }
-      ]
+      ],
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
     }
   },
   "allowScripts": {

@@ -78,8 +78,9 @@ npm install
 npm run dev            # 开发模式
 npm run typecheck
 npm run build:native   # 编译 traffic-etw.exe（需要 Rust）
-npm run dist           # 编译助手 + 打包 NSIS 安装包到 dist/
+npm run dist           # 编译助手 + 打包 NSIS 安装包
 npm run dist:mac       # 在 Mac 上打包 dmg（x64 + arm64，未签名）
+# 安装包按版本号收集到 dist/<版本号>/（中间文件在 dist/.build/）；Mac 上打的 dmg 拷到同一目录
 node scripts/gen-icon.js   # 重新生成图标
 
 native/target/release/traffic-etw.exe --list-ifaces out.json   # 查看网卡及 VPN 判定（无需管理员）
