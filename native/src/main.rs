@@ -38,6 +38,7 @@ const KERNEL_PROCESS: &str = "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716";
 /// WINEVENT_KEYWORD_PROCESS: process start/stop
 const PROCESS_KEYWORDS: u64 = 0x10;
 const STARTED_MAX: usize = 8192;
+const IFACE_REFRESH: Duration = Duration::from_secs(10);
 /// KERNEL_NETWORK_KEYWORD_IPV4 | KERNEL_NETWORK_KEYWORD_IPV6
 const NET_KEYWORDS: u64 = 0x10 | 0x20;
 /// Exit when no client has been connected for this long (also the start-up grace period).
@@ -56,6 +57,22 @@ struct PidAgg {
     hosts: HashMap<IpAddr, u64>,
     /// Loopback TCP by remote (server) port: (sent, received)
     loops: HashMap<u16, (u64, u64)>,
+    /// By local interface index (0 = unknown): (sent, received)
+    ifs: HashMap<u32, (u64, u64)>,
+}
+
+/// A network interface as reported by GetAdaptersAddresses.
+#[derive(Clone)]
+struct Iface {
+    alias: String,
+    desc: String,
+    vpn: bool,
+}
+
+#[derive(Default)]
+struct IfaceMap {
+    by_ip: HashMap<IpAddr, u32>,
+    info: HashMap<u32, Iface>,
 }
 
 struct State {
@@ -65,6 +82,7 @@ struct State {
     started: Mutex<HashMap<u32, String>>,
     /// NT device prefix ("\Device\HarddiskVolume3") -> drive ("C:")
     drives: Vec<(String, String)>,
+    ifaces: Mutex<IfaceMap>,
     dns: Mutex<HashMap<IpAddr, String>>,
     connected: AtomicBool,
     last_client_ms: AtomicU64,
@@ -200,13 +218,21 @@ fn on_network(state: &State, record: &EventRecord, locator: &SchemaLocator) {
     // in both directions; UDP events report the datagram's own source/destination.
     // PID is the owning process; the header PID of a receive is often 4 (System).
     let remote = if is_tcp || is_send { daddr } else { saddr };
+    let local = if is_tcp || is_send { saddr } else { daddr };
+    // The local address tells which interface (physical NIC, VPN adapter…) carried it
+    let ifindex = local
+        .and_then(|ip| state.ifaces.lock().unwrap().by_ip.get(&canonical(ip)).copied())
+        .unwrap_or(0);
 
     let mut pending = state.pending_for(pid);
     let agg = pending.get_mut(&pid).unwrap();
+    let per_if = agg.ifs.entry(ifindex).or_default();
     if is_send {
         agg.up += size as u64;
+        per_if.0 += size as u64;
     } else {
         agg.down += size as u64;
+        per_if.1 += size as u64;
     }
     if let Some(ip) = remote {
         *agg.hosts.entry(canonical(ip)).or_default() += size as u64;
@@ -230,6 +256,93 @@ fn on_process(state: &State, record: &EventRecord, locator: &SchemaLocator) {
     }
     // A reused PID simply overwrites the previous owner
     started.insert(pid, path);
+}
+
+/// Virtual adapters that tunnel traffic somewhere else (VPNs, TUN-mode proxies,
+/// overlay networks), as opposed to physical NICs and local VM switches.
+fn is_vpn(if_type: u32, alias: &str, desc: &str) -> bool {
+    let text = format!("{alias} {desc}").to_lowercase();
+    // Host-side adapters of local VMs / WSL and Windows' own miniports aren't tunnels
+    if ["hyper-v", "vmware", "virtualbox", "bluetooth", "wan miniport", "loopback"].iter().any(|k| text.contains(k)) {
+        return false;
+    }
+    // IF_TYPE_PPP, IF_TYPE_PROP_VIRTUAL (wintun, TAP), IF_TYPE_TUNNEL
+    if matches!(if_type, 23 | 53 | 131) {
+        return true;
+    }
+    ["wintun", "wireguard", "tap-windows", "openvpn", "vpn", "tunnel", "zerotier", "tailscale", "mihomo", "clash", "sing-box"]
+        .iter()
+        .any(|k| text.contains(k))
+}
+
+fn wide_str(p: *const u16) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    unsafe {
+        let len = (0..).take_while(|&i| *p.add(i) != 0).count();
+        String::from_utf16_lossy(std::slice::from_raw_parts(p, len))
+    }
+}
+
+/// Local unicast address -> interface index, plus each interface's name and kind.
+fn load_ifaces() -> IfaceMap {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses,
+        IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6};
+    let mut map = IfaceMap::default();
+    let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    let mut size: u32 = 32 * 1024;
+    let mut buf: Vec<u64>;
+    loop {
+        buf = vec![0u64; size as usize / 8 + 1];
+        let ret = unsafe {
+            GetAdaptersAddresses(AF_UNSPEC as u32, flags, std::ptr::null(), buf.as_mut_ptr().cast(), &mut size)
+        };
+        match ret {
+            0 => break,
+            // ERROR_BUFFER_OVERFLOW: size now holds what's needed
+            111 => continue,
+            _ => return map,
+        }
+    }
+    unsafe {
+        let mut a = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
+        while !a.is_null() {
+            let ad = &*a;
+            let index = ad.Anonymous1.Anonymous.IfIndex;
+            let index = if index != 0 { index } else { ad.Ipv6IfIndex };
+            let alias = wide_str(ad.FriendlyName);
+            let desc = wide_str(ad.Description);
+            let vpn = is_vpn(ad.IfType, &alias, &desc);
+            let mut u = ad.FirstUnicastAddress;
+            while !u.is_null() {
+                let sa = (*u).Address.lpSockaddr;
+                if !sa.is_null() {
+                    let ip = match (*sa).sa_family {
+                        AF_INET => {
+                            let v4 = &*(sa as *const SOCKADDR_IN);
+                            Some(IpAddr::from(v4.sin_addr.S_un.S_addr.to_ne_bytes()))
+                        }
+                        AF_INET6 => {
+                            let v6 = &*(sa as *const SOCKADDR_IN6);
+                            Some(IpAddr::from(v6.sin6_addr.u.Byte))
+                        }
+                        _ => None,
+                    };
+                    if let Some(ip) = ip {
+                        map.by_ip.insert(canonical(ip), index);
+                    }
+                }
+                u = (*u).Next;
+            }
+            map.info.insert(index, Iface { alias, desc, vpn });
+            a = ad.Next;
+        }
+    }
+    map
 }
 
 /// Map NT device names to drive letters for converting Kernel-Process image paths.
@@ -416,6 +529,11 @@ fn flush(state: &State) -> Option<String> {
         let entry = by_path.entry(path.clone()).or_default();
         entry.up += agg.up;
         entry.down += agg.down;
+        for (idx, (up, down)) in agg.ifs {
+            let e = entry.ifs.entry(idx).or_default();
+            e.0 += up;
+            e.1 += down;
+        }
         let names = host_names.entry(path).or_default();
         for (ip, bytes) in agg.hosts {
             let host = dns.get(&ip).cloned().unwrap_or_else(|| ip.to_string());
@@ -429,15 +547,28 @@ fn flush(state: &State) -> Option<String> {
     }
     drop(paths);
 
+    let mut used_ifs: Vec<u32> = Vec::new();
     let procs: Vec<_> = by_path
         .into_iter()
         .map(|(path, agg)| {
             let mut hosts: Vec<(String, u64)> = host_names.remove(&path).unwrap_or_default().into_iter().collect();
             hosts.sort_by(|a, b| b.1.cmp(&a.1));
             hosts.truncate(HOSTS_PER_PROC);
-            json!({ "path": path, "up": agg.up, "down": agg.down, "hosts": hosts })
+            let ifs: Vec<(u32, u64, u64)> = agg.ifs.into_iter().map(|(i, (u, d))| (i, u, d)).collect();
+            used_ifs.extend(ifs.iter().map(|f| f.0));
+            json!({ "path": path, "up": agg.up, "down": agg.down, "hosts": hosts, "ifs": ifs })
         })
         .collect();
+    used_ifs.sort_unstable();
+    used_ifs.dedup();
+    let ifaces: Vec<_> = {
+        let map = state.ifaces.lock().unwrap();
+        used_ifs
+            .into_iter()
+            .filter_map(|i| map.info.get(&i).map(|f| (i, f.clone())))
+            .map(|(i, f)| json!({ "index": i, "alias": f.alias, "desc": f.desc, "vpn": f.vpn }))
+            .collect()
+    };
     let mut loops: Vec<_> = loops.into_iter().collect();
     loops.sort_by(|a, b| (b.1.0 + b.1.1).cmp(&(a.1.0 + a.1.1)));
     loops.truncate(LOOPS_MAX);
@@ -447,7 +578,7 @@ fn flush(state: &State) -> Option<String> {
             json!({ "client": client, "server": server, "port": port, "up": up, "down": down })
         })
         .collect();
-    Some(json!({ "procs": procs, "loops": loops }).to_string())
+    Some(json!({ "procs": procs, "loops": loops, "ifaces": ifaces }).to_string())
 }
 
 // ── Named pipe server ────────────────────────────────────────────────────────
@@ -559,12 +690,28 @@ fn main() {
         Mutex::new(Probe { out: std::fs::File::create(path).expect("probe file"), net_lines: 0, dns_lines: 0 })
     });
     let probing = probe.is_some();
+    // `--list-ifaces <file>`: dump the interface table (no elevation needed) and exit
+    if let Some(out) = args.iter().position(|a| a == "--list-ifaces").and_then(|i| args.get(i + 1)) {
+        let map = load_ifaces();
+        let mut rows: Vec<_> = map
+            .info
+            .iter()
+            .map(|(i, f)| {
+                let ips: Vec<String> = map.by_ip.iter().filter(|(_, idx)| *idx == i).map(|(ip, _)| ip.to_string()).collect();
+                json!({ "index": i, "alias": f.alias, "desc": f.desc, "vpn": f.vpn, "ips": ips })
+            })
+            .collect();
+        rows.sort_by_key(|r| r["index"].as_u64());
+        let _ = std::fs::write(out, serde_json::to_string_pretty(&rows).unwrap_or_default());
+        return;
+    }
 
     let state = Arc::new(State {
         pending: Mutex::new(HashMap::new()),
         paths: Mutex::new(HashMap::new()),
         started: Mutex::new(HashMap::new()),
         drives: drive_map(),
+        ifaces: Mutex::new(load_ifaces()),
         dns: Mutex::new(HashMap::new()),
         connected: AtomicBool::new(false),
         last_client_ms: AtomicU64::new(now_ms()),
@@ -613,8 +760,14 @@ fn main() {
     let ps = state.clone();
     std::thread::spawn(move || serve_pipe(ps, rx));
 
+    let mut ifaces_at = Instant::now();
     loop {
         std::thread::sleep(Duration::from_secs(1));
+        // VPNs come and go (and take addresses with them)
+        if ifaces_at.elapsed() >= IFACE_REFRESH {
+            *state.ifaces.lock().unwrap() = load_ifaces();
+            ifaces_at = Instant::now();
+        }
         let line = flush(&state);
         if state.connected.load(Ordering::SeqCst) {
             if let Some(line) = line {
