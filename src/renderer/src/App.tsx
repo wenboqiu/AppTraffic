@@ -38,7 +38,9 @@ export default function App() {
     return () => ro.disconnect();
   }, []);
 
-  const status = snap?.status;
+  const sources = snap?.sources ?? [];
+  const anyConnected = sources.some((s) => s.connected);
+  const clashVersion = sources.find((s) => s.id === 'clash')?.version;
   const total = snap ? snap.totalUp + snap.totalDown : 0;
 
   return (
@@ -46,7 +48,7 @@ export default function App() {
       <div className="app-inner" ref={appRef}>
         <header className="app-header">
           <span className="app-title">
-            <span className={`status-dot ${status?.connected ? 'ok' : 'bad'}`} />
+            <span className={`status-dot ${anyConnected ? 'ok' : 'bad'}`} />
             Clash 流量
           </span>
           <button className="close-btn" title="关闭" onClick={() => window.electronAPI.closePopup()}>
@@ -54,7 +56,13 @@ export default function App() {
           </button>
         </header>
 
-        {status && !status.connected && <div className="error-banner">{status.error}</div>}
+        {sources
+          .filter((s) => !s.connected && s.error)
+          .map((s) => (
+            <div key={s.id} className="error-banner">
+              {s.error}
+            </div>
+          ))}
 
         <div className="range-tabs">
           {RANGES.map((r) => (
@@ -87,7 +95,7 @@ export default function App() {
         <footer className="app-footer">
           <span>
             {snap?.since ? `记录自 ${snap.since}` : '暂无记录'}
-            {status?.version && ` · mihomo ${status.version}`}
+            {clashVersion && ` · mihomo ${clashVersion}`}
           </span>
           <button className="link-btn" onClick={() => window.electronAPI.openDataFolder()}>
             数据目录

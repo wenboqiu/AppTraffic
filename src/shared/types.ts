@@ -32,7 +32,9 @@ export interface ProcRow {
   topHosts: [string, number][];
 }
 
-export interface CoreStatus {
+export interface SourceStatus {
+  id: string;
+  label: string;
   connected: boolean;
   endpoint: string;
   version: string | null;
@@ -41,7 +43,7 @@ export interface CoreStatus {
 
 export interface Snapshot {
   range: Range;
-  status: CoreStatus;
+  sources: SourceStatus[];
   totalUp: number;
   totalDown: number;
   totalDirect: number;
