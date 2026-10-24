@@ -5,6 +5,9 @@
 
 import { addDelta, aggregate, earliestDay, saveStore } from './store';
 import { ClashSource } from './sources/clash';
+import { EtwSource } from './sources/etw';
+import { Reconciler } from './merge';
+import { systemProxyPorts } from './sysproxy';
 import type { TrafficSource } from './sources/types';
 import type { ProcRow, Range, Snapshot } from '../../shared/types';
 
@@ -12,7 +15,10 @@ const POLL_MS = 1000;
 const SAVE_EVERY_MS = 30_000;
 const TOP_HOSTS = 8;
 
-const sources: TrafficSource[] = [new ClashSource()];
+const clash = new ClashSource();
+const etw = new EtwSource();
+const sources: TrafficSource<unknown>[] = [clash, etw];
+const reconciler = new Reconciler();
 let liveConns = new Map<string, number>();
 let lastTickAt = 0;
 let speed = { up: 0, down: 0 };
@@ -41,39 +47,46 @@ export function stopCollector(): void {
   saveStore(true);
 }
 
+/** Run a source's button action (currently only "start the ETW helper"). */
+export async function runSourceAction(id: string): Promise<void> {
+  if (id === etw.id) await etw.start();
+  listeners.forEach((fn) => fn());
+}
+
+async function settle<S>(src: TrafficSource<S>): Promise<S | null> {
+  try {
+    return await src.poll();
+  } catch {
+    src.reset();
+    return null;
+  }
+}
+
 async function tick(): Promise<void> {
   if (busy) return; // a slow request must not stack up overlapping polls
   busy = true;
   try {
-    const results = await Promise.allSettled(sources.map((s) => s.poll()));
+    const [c, e] = await Promise.all([settle(clash), settle(etw)]);
     const now = Date.now();
+    liveConns = c?.liveConns ?? new Map();
 
-    const tickSpeed = new Map<string, { up: number; down: number }>();
-    const conns = new Map<string, number>();
-    let anyOk = false;
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') {
-        sources[i].reset();
-        return;
-      }
-      anyOk = true;
-      for (const d of r.value.deltas) {
-        addDelta(d);
-        const s = tickSpeed.get(d.proc) ?? { up: 0, down: 0 };
-        s.up += d.up;
-        s.down += d.down;
-        tickSpeed.set(d.proc, s);
-      }
-      for (const [proc, n] of r.value.liveConns) conns.set(proc, (conns.get(proc) ?? 0) + n);
-    });
-    liveConns = conns;
-
-    if (!anyOk) {
+    if (!c && !e) {
+      reconciler.reset();
       lastTickAt = 0;
       speed = { up: 0, down: 0 };
       procSpeed.clear();
       return;
     }
+
+    const tickSpeed = new Map<string, { up: number; down: number }>();
+    for (const d of reconciler.merge(c, e, systemProxyPorts())) {
+      addDelta(d);
+      const s = tickSpeed.get(d.proc) ?? { up: 0, down: 0 };
+      s.up += d.up;
+      s.down += d.down;
+      tickSpeed.set(d.proc, s);
+    }
+
     // The first tick after (re)connecting only sets baselines, so there's no interval to divide by yet
     if (lastTickAt) {
       const secs = Math.max((now - lastTickAt) / 1000, 0.001);

@@ -1,5 +1,5 @@
 import { ipcMain, shell } from 'electron';
-import { getSnapshot } from './services/collector';
+import { getSnapshot, runSourceAction } from './services/collector';
 import { storePath } from './services/store';
 import { getPopup, hidePopup, isPopupVisible, setPopupHeight } from './popup';
 import type { Range } from '../shared/types';
@@ -11,6 +11,8 @@ export function registerIpcHandlers(): void {
     currentRange = range;
     return getSnapshot(range);
   });
+
+  ipcMain.handle('source-action', (_e, id: string) => runSourceAction(id));
 
   ipcMain.on('show-in-folder', (_e, filePath: string) => {
     if (filePath) shell.showItemInFolder(filePath);

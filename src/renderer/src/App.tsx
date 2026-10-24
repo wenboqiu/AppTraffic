@@ -60,7 +60,12 @@ export default function App() {
           .filter((s) => !s.connected && s.error)
           .map((s) => (
             <div key={s.id} className="error-banner">
-              {s.error}
+              <span>{s.error}</span>
+              {s.action && (
+                <button className="banner-btn" onClick={() => window.electronAPI.runSourceAction(s.id)}>
+                  {s.action}
+                </button>
+              )}
             </div>
           ))}
 

@@ -60,11 +60,13 @@ function emptyStat(procPath: string): ProcStat {
 export interface Delta {
   proc: string;
   path: string;
-  host: string;
   up: number;
   down: number;
-  direct: boolean;
-  isNewConn: boolean;
+  /** Part of up + down that went out directly rather than through a proxy. */
+  direct: number;
+  newConns: number;
+  /** host -> bytes; may cover only part of up + down. */
+  hosts: [string, number][];
 }
 
 export function addDelta(d: Delta): void {
@@ -74,12 +76,14 @@ export function addDelta(d: Delta): void {
   if (!stat.path && d.path) stat.path = d.path;
   stat.up += d.up;
   stat.down += d.down;
-  if (d.direct) stat.direct += d.up + d.down;
-  if (d.isNewConn) stat.conns++;
-  if (d.host && d.up + d.down > 0) {
-    stat.hosts[d.host] = (stat.hosts[d.host] ?? 0) + d.up + d.down;
-    if (Object.keys(stat.hosts).length > HOSTS_TRIM_AT) stat.hosts = topN(stat.hosts, HOSTS_KEEP);
+  // A negative direct moves bytes ETW booked early over to proxied (see merge.ts)
+  stat.direct = Math.min(stat.up + stat.down, Math.max(0, stat.direct + d.direct));
+  stat.conns += d.newConns;
+  for (const [host, bytes] of d.hosts) {
+    if (!host || bytes <= 0) continue;
+    stat.hosts[host] = (stat.hosts[host] ?? 0) + bytes;
   }
+  if (Object.keys(stat.hosts).length > HOSTS_TRIM_AT) stat.hosts = topN(stat.hosts, HOSTS_KEEP);
   dirty = true;
 }
 

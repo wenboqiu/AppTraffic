@@ -11,6 +11,8 @@ const api = {
     return () => ipcRenderer.removeListener('snapshot', handler);
   },
 
+  runSourceAction: (id: string): Promise<void> => ipcRenderer.invoke('source-action', id),
+
   showInFolder: (filePath: string): void => {
     ipcRenderer.send('show-in-folder', filePath);
   },

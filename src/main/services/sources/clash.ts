@@ -7,8 +7,7 @@
 import { MihomoClient } from '../mihomo';
 import { CORE_INNER, UNATTRIBUTED, UNKNOWN_PROCESS } from '../../../shared/types';
 import type { SourceStatus } from '../../../shared/types';
-import type { Delta } from '../store';
-import type { SourceSample, TrafficSource } from './types';
+import type { ClashDelta, ClashSample, ClashVia, TrafficSource } from './types';
 
 interface LiveConn {
   proc: string;
@@ -16,14 +15,14 @@ interface LiveConn {
   down: number;
 }
 
-export class ClashSource implements TrafficSource {
+export class ClashSource implements TrafficSource<ClashSample> {
   readonly id = 'clash';
   private client = new MihomoClient();
   private live = new Map<string, LiveConn>();
   private lastGlobal: { up: number; down: number } | null = null;
   private lastError: string | null = '正在连接 Clash…';
 
-  async poll(): Promise<SourceSample> {
+  async poll(): Promise<ClashSample> {
     let resp;
     try {
       resp = await this.client.getConnections();
@@ -33,7 +32,7 @@ export class ClashSource implements TrafficSource {
     }
     this.lastError = null;
 
-    const deltas: Delta[] = [];
+    const deltas: ClashDelta[] = [];
     const seen = new Set<string>();
     let attributedUp = 0;
     let attributedDown = 0;
@@ -57,14 +56,18 @@ export class ClashSource implements TrafficSource {
       attributedUp += dUp;
       attributedDown += dDown;
       if (!prev || dUp || dDown) {
+        const via: ClashVia =
+          c.metadata.type === 'Inner' ? 'inner' : c.metadata.type === 'Tun' ? 'tun' : 'proxy';
         deltas.push({
           proc,
           path: c.metadata.processPath,
-          host: c.metadata.host || c.metadata.destinationIP,
           up: dUp,
           down: dDown,
-          direct: c.chains?.[0] === 'DIRECT',
-          isNewConn: !prev,
+          direct: c.chains?.[0] === 'DIRECT' ? dUp + dDown : 0,
+          newConns: prev ? 0 : 1,
+          hosts: [[c.metadata.host || c.metadata.destinationIP, dUp + dDown]],
+          via,
+          known: !!c.metadata.process,
         });
       }
     }
@@ -81,11 +84,13 @@ export class ClashSource implements TrafficSource {
         deltas.push({
           proc: UNATTRIBUTED,
           path: '',
-          host: '',
           up: Math.max(0, gapUp),
           down: Math.max(0, gapDown),
-          direct: false,
-          isNewConn: false,
+          direct: 0,
+          newConns: 0,
+          hosts: [],
+          via: 'gap',
+          known: false,
         });
       }
     }
@@ -110,6 +115,7 @@ export class ClashSource implements TrafficSource {
       endpoint: this.client.endpointLabel,
       version: this.client.version,
       error: this.lastError,
+      action: null,
     };
   }
 }

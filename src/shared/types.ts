@@ -39,6 +39,8 @@ export interface SourceStatus {
   endpoint: string;
   version: string | null;
   error: string | null;
+  /** Label of a button that fixes the error (e.g. start the helper), if any. */
+  action: string | null;
 }
 
 export interface Snapshot {
