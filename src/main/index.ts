@@ -58,9 +58,9 @@ let lastTooltip = '';
 function updateTooltip(): void {
   if (!tray) return;
   const s = getSnapshot('today');
-  const text = s.sources.some((src) => src.connected)
+  const text = s.sources.some((src) => src.state === 'on')
     ? `ClashTraffic\n今日 ↓${fmtBytes(s.totalDown)} ↑${fmtBytes(s.totalUp)}\n实时 ↓${fmtSpeed(s.speedDown)} ↑${fmtSpeed(s.speedUp)}`
-    : 'ClashTraffic\n未连接 Clash Verge';
+    : 'ClashTraffic\n未在统计：系统流量未启用，也未检测到代理';
   if (text !== lastTooltip) {
     tray.setToolTip(text);
     lastTooltip = text;

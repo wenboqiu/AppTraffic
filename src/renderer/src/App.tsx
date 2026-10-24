@@ -39,35 +39,39 @@ export default function App() {
   }, []);
 
   const sources = snap?.sources ?? [];
-  const anyConnected = sources.some((s) => s.connected);
-  const clashVersion = sources.find((s) => s.id === 'clash')?.version;
+  const anyOn = sources.some((s) => s.state === 'on');
   const total = snap ? snap.totalUp + snap.totalDown : 0;
+  const routes = snap?.routes ?? [];
 
   return (
     <div className="app">
       <div className="app-inner" ref={appRef}>
         <header className="app-header">
           <span className="app-title">
-            <span className={`status-dot ${anyConnected ? 'ok' : 'bad'}`} />
-            Clash 流量
+            <span className={`status-dot ${anyOn ? 'ok' : 'bad'}`} />
+            应用流量
           </span>
           <button className="close-btn" title="关闭" onClick={() => window.electronAPI.closePopup()}>
             ×
           </button>
         </header>
 
-        {sources
-          .filter((s) => !s.connected && s.error)
-          .map((s) => (
-            <div key={s.id} className="error-banner">
-              <span>{s.error}</span>
+        <div className="source-list">
+          {sources.map((s) => (
+            <div key={s.id} className={`source-row ${s.state}`}>
+              <span className="source-dot" />
+              <span className="source-label">{s.label}</span>
+              <span className="source-detail" title={s.detail}>
+                {s.detail}
+              </span>
               {s.action && (
-                <button className="banner-btn" onClick={() => window.electronAPI.runSourceAction(s.id)}>
+                <button className="source-btn" onClick={() => window.electronAPI.runSourceAction(s.id)}>
                   {s.action}
                 </button>
               )}
             </div>
           ))}
+        </div>
 
         <div className="range-tabs">
           {RANGES.map((r) => (
@@ -86,9 +90,18 @@ export default function App() {
           <StatCell label="上传" value={fmtBytes(snap?.totalUp ?? 0)} />
           <StatCell
             label="走代理"
-            value={total ? `${Math.round(((total - (snap?.totalDirect ?? 0)) / total) * 100)}%` : '—'}
+            value={total && routes.length ? `${Math.round(((total - (snap?.totalDirect ?? 0)) / total) * 100)}%` : '—'}
           />
         </div>
+        {routes.length > 0 && (
+          <div className="route-row">
+            {routes.map(([r, b]) => (
+              <span key={r}>
+                经 {r} {fmtBytes(b)}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="speed-row">
           <span>实时</span>
           <span className="speed-val">↓ {fmtSpeed(snap?.speedDown ?? 0)}</span>
@@ -100,7 +113,6 @@ export default function App() {
         <footer className="app-footer">
           <span>
             {snap?.since ? `记录自 ${snap.since}` : '暂无记录'}
-            {clashVersion && ` · mihomo ${clashVersion}`}
           </span>
           <button className="link-btn" onClick={() => window.electronAPI.openDataFolder()}>
             数据目录

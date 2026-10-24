@@ -4,14 +4,15 @@
 
 import { app } from 'electron';
 import path from 'path';
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
+import { CORE_INNER, DIRECT, LEGACY_ROUTE } from '../../shared/types';
 import type { DayData, ProcStat, Range, StoreFile } from '../../shared/types';
 
 const KEEP_DAYS = 90;
 const HOSTS_KEEP = 100;
 const HOSTS_TRIM_AT = 200;
 
-let data: StoreFile = { version: 1, days: {} };
+let data: StoreFile = { version: 2, days: {} };
 let dirty = false;
 
 export function storePath(): string {
@@ -27,11 +28,50 @@ export function loadStore(): void {
   const file = storePath();
   if (!existsSync(file)) return;
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as StoreFile;
-    if (parsed?.version === 1 && parsed.days) data = parsed;
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    if (parsed?.version === 2 && parsed.days) data = parsed as StoreFile;
+    else if (parsed?.version === 1 && parsed.days) {
+      // Keep the original so a downgrade can still read it
+      copyFileSync(file, `${file}.v1.bak`);
+      data = migrateV1(parsed);
+      dirty = true;
+    }
   } catch (e) {
     console.error('traffic.json unreadable, starting fresh:', e);
   }
+}
+
+interface ProcStatV1 {
+  path: string;
+  up: number;
+  down: number;
+  direct: number;
+  conns: number;
+  hosts: Record<string, number>;
+}
+
+/** v1 (ClashTraffic) kept a single direct counter; everything else went through Clash Verge. */
+function migrateV1(v1: { days: Record<string, Record<string, ProcStatV1>> }): StoreFile {
+  const days: Record<string, DayData> = {};
+  for (const [k, day] of Object.entries(v1.days)) {
+    const out: DayData = (days[k] = {});
+    for (const [proc, s] of Object.entries(day)) {
+      const proxied = Math.max(0, s.up + s.down - s.direct);
+      const routes: Record<string, number> = {};
+      if (s.direct > 0) routes[DIRECT] = s.direct;
+      if (proxied > 0) routes[LEGACY_ROUTE] = proxied;
+      // The core's own traffic: v1's inner bucket and mihomo's pathless "mihomo" downloads
+      const own = proc === '(Clash 内核 · DNS 等)' || (proc === 'mihomo' && !s.path);
+      const name = own ? CORE_INNER : proc;
+      const acc = (out[name] ??= emptyStat(s.path));
+      acc.up += s.up;
+      acc.down += s.down;
+      acc.conns += s.conns;
+      for (const [h, b] of Object.entries(s.hosts)) acc.hosts[h] = (acc.hosts[h] ?? 0) + b;
+      for (const [r, b] of Object.entries(routes)) acc.routes[r] = (acc.routes[r] ?? 0) + b;
+    }
+  }
+  return { version: 2, days };
 }
 
 export function saveStore(force = false): void {
@@ -54,7 +94,7 @@ function prune(): void {
 }
 
 function emptyStat(procPath: string): ProcStat {
-  return { path: procPath, up: 0, down: 0, direct: 0, conns: 0, hosts: {} };
+  return { path: procPath, up: 0, down: 0, conns: 0, hosts: {}, routes: {} };
 }
 
 export interface Delta {
@@ -64,6 +104,8 @@ export interface Delta {
   down: number;
   /** Part of up + down that went out directly rather than through a proxy. */
   direct: number;
+  /** Proxy client that carried the rest ("Clash Verge"…); '' when nothing was proxied. */
+  route: string;
   newConns: number;
   /** host -> bytes; may cover only part of up + down. */
   hosts: [string, number][];
@@ -77,7 +119,8 @@ export function addDelta(d: Delta): void {
   stat.up += d.up;
   stat.down += d.down;
   // A negative direct moves bytes ETW booked early over to proxied (see merge.ts)
-  stat.direct = Math.min(stat.up + stat.down, Math.max(0, stat.direct + d.direct));
+  addRoute(stat, DIRECT, d.direct);
+  addRoute(stat, d.route || 'proxy', d.up + d.down - d.direct);
   stat.conns += d.newConns;
   for (const [host, bytes] of d.hosts) {
     if (!host || bytes <= 0) continue;
@@ -85,6 +128,13 @@ export function addDelta(d: Delta): void {
   }
   if (Object.keys(stat.hosts).length > HOSTS_TRIM_AT) stat.hosts = topN(stat.hosts, HOSTS_KEEP);
   dirty = true;
+}
+
+function addRoute(stat: ProcStat, route: string, bytes: number): void {
+  if (!bytes) return;
+  const next = Math.max(0, (stat.routes[route] ?? 0) + bytes);
+  if (next > 0) stat.routes[route] = next;
+  else delete stat.routes[route];
 }
 
 function topN(rec: Record<string, number>, n: number): Record<string, number> {
@@ -110,7 +160,7 @@ export function aggregate(range: Range): DayData {
       if (!acc.path && s.path) acc.path = s.path;
       acc.up += s.up;
       acc.down += s.down;
-      acc.direct += s.direct;
+      for (const [r, b] of Object.entries(s.routes)) acc.routes[r] = (acc.routes[r] ?? 0) + b;
       acc.conns += s.conns;
       for (const [h, b] of Object.entries(s.hosts)) acc.hosts[h] = (acc.hosts[h] ?? 0) + b;
     }

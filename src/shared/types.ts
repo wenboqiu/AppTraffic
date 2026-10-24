@@ -1,21 +1,24 @@
 export type Range = 'today' | '7d' | '30d' | 'all';
 
+/** Route key for bytes that didn't go through any proxy or VPN. */
+export const DIRECT = 'direct';
+
 /** One process's accumulated traffic inside a single day bucket (persisted). */
 export interface ProcStat {
   path: string;
   up: number;
   down: number;
-  /** Bytes (up + down) that went out via DIRECT rather than a proxy node. */
-  direct: number;
   conns: number;
   /** host -> bytes (up + down), trimmed to the top entries. */
   hosts: Record<string, number>;
+  /** Route -> bytes (up + down): DIRECT, or the proxy client that carried them ("Clash Verge"…). */
+  routes: Record<string, number>;
 }
 
 export type DayData = Record<string, ProcStat>;
 
 export interface StoreFile {
-  version: 1;
+  version: 2;
   days: Record<string, DayData>;
 }
 
@@ -25,6 +28,8 @@ export interface ProcRow {
   up: number;
   down: number;
   direct: number;
+  /** Non-direct routes, largest first. */
+  routes: [string, number][];
   conns: number;
   liveConns: number;
   speedUp: number;
@@ -34,12 +39,13 @@ export interface ProcRow {
 
 export interface SourceStatus {
   id: string;
+  /** What the source is: "系统流量", "代理" */
   label: string;
-  connected: boolean;
-  endpoint: string;
-  version: string | null;
-  error: string | null;
-  /** Label of a button that fixes the error (e.g. start the helper), if any. */
+  /** on: delivering data; off: not running / not detected (normal); error: needs attention */
+  state: 'on' | 'off' | 'error';
+  /** "已启用", "Clash Verge · mihomo v1.19.2", "未检测到"… */
+  detail: string;
+  /** Label of a button that turns the source on, if it can be. */
   action: string | null;
 }
 
@@ -49,6 +55,8 @@ export interface Snapshot {
   totalUp: number;
   totalDown: number;
   totalDirect: number;
+  /** Non-direct routes across all processes, largest first. */
+  routes: [string, number][];
   speedUp: number;
   speedDown: number;
   procs: ProcRow[];
@@ -59,4 +67,6 @@ export interface Snapshot {
 /** Bucket name for traffic seen in the core's global counters but not on any polled connection. */
 export const UNATTRIBUTED = '(短连接/未归属)';
 export const UNKNOWN_PROCESS = '(未识别进程)';
-export const CORE_INNER = '(Clash 内核 · DNS 等)';
+export const CORE_INNER = '(代理内核 · DNS 等)';
+/** v1 data came only from Clash Verge; its proxied bytes are migrated to this route. */
+export const LEGACY_ROUTE = 'Clash Verge';

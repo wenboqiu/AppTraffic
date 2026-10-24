@@ -101,26 +101,39 @@ body {
 }
 .close-btn:hover { color: var(--text); background: var(--bg-3); }
 
-.error-banner {
-  background: color-mix(in srgb, var(--danger) 15%, var(--bg));
-  color: var(--danger);
-  font-size: 12px;
+.source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--bg-3);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.banner-btn {
-  flex-shrink: 0;
-  border: 1px solid currentColor;
-  background: transparent;
-  color: inherit;
-  border-radius: 4px;
-  padding: 2px 10px;
   font-size: 12px;
+}
+.source-row { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.source-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); flex-shrink: 0; }
+.source-row.on .source-dot { background: var(--success); }
+.source-row.error .source-dot { background: var(--danger); }
+.source-label { color: var(--text); flex-shrink: 0; }
+.source-detail { color: var(--text-2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.source-row.error .source-detail { color: var(--danger); }
+.source-btn {
+  flex-shrink: 0;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 1px 10px;
+  font-size: 12px;
+}
+.source-btn:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+
+.route-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 0 16px 6px;
+  font-size: 11px;
+  color: var(--text-2);
 }
 
 button { cursor: pointer; font-family: inherit; }

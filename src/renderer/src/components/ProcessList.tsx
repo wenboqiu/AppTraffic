@@ -57,7 +57,13 @@ export default function ProcessList({ procs }: { procs: ProcRow[] }) {
                   </div>
                 )}
                 <div className="proc-meta">
-                  累计 {p.conns} 个连接 · 直连 {fmtBytes(p.direct)} · 代理 {fmtBytes(total - p.direct)}
+                  {[
+                    p.conns > 0 && `累计 ${p.conns} 个连接`,
+                    `直连 ${fmtBytes(p.direct)}`,
+                    ...p.routes.map(([r, b]) => `经 ${r} ${fmtBytes(b)}`),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </div>
                 {p.topHosts.length > 0 && (
                   <div className="host-list">

@@ -139,16 +139,10 @@ export class EtwSource implements TrafficSource<EtwSample> {
   }
 
   status(): SourceStatus {
-    return {
-      id: this.id,
-      label: '系统流量',
-      connected: this.ready,
-      endpoint: PIPE,
-      version: null,
-      error: this.ready
-        ? null
-        : (this.lastError ?? (this.starting ? '等待管理员授权…' : '系统流量统计未启用，需要管理员授权')),
-      action: this.ready || this.starting ? null : '启用',
-    };
+    const base = { id: this.id, label: '系统流量' };
+    if (this.ready) return { ...base, state: 'on', detail: '已启用', action: null };
+    if (this.starting) return { ...base, state: 'off', detail: '等待管理员授权…', action: null };
+    if (this.lastError) return { ...base, state: 'error', detail: this.lastError, action: '启用' };
+    return { ...base, state: 'off', detail: '未启用：按应用统计全部流量需要管理员授权', action: '启用' };
   }
 }
