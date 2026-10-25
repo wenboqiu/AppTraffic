@@ -11,9 +11,16 @@ interface Settings {
   etwEnabled: boolean;
   /** macOS: nettop needs no permission, so system statistics are on unless turned off. */
   nettopEnabled: boolean;
+  /** Anonymous usage statistics (see analytics.ts); the user can turn it off from the tray menu. */
+  analyticsEnabled: boolean;
+  /** Random ID identifying this install in the statistics. */
+  installId?: string;
+  installReported?: boolean;
+  /** Local date (YYYY-MM-DD) of the last daily-active report. */
+  lastActiveDay?: string;
 }
 
-const DEFAULTS: Settings = { etwEnabled: false, nettopEnabled: true };
+const DEFAULTS: Settings = { etwEnabled: false, nettopEnabled: true, analyticsEnabled: true };
 let cache: Settings | null = null;
 
 function file(): string {

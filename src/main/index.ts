@@ -5,6 +5,12 @@ import { createPopupWindow, togglePopup, isPopupVisible } from './popup';
 import { registerIpcHandlers, pushSnapshot } from './ipc';
 import { startCollector, stopCollector, onTick, getSnapshot } from './services/collector';
 import { importLegacyStore, loadStore, storePath } from './services/store';
+import {
+  startAnalytics,
+  stopAnalytics,
+  isAnalyticsEnabled,
+  setAnalyticsEnabled,
+} from './services/analytics';
 import { fmtBytes, fmtSpeed } from '../shared/format';
 
 // Single-instance lock
@@ -47,6 +53,7 @@ app.whenReady().then(() => {
     updateTooltip();
   });
   startCollector();
+  startAnalytics();
 });
 
 app.on('second-instance', () => {
@@ -54,7 +61,10 @@ app.on('second-instance', () => {
 });
 
 // Flush the in-memory counters before exiting
-app.on('before-quit', () => stopCollector());
+app.on('before-quit', () => {
+  stopCollector();
+  stopAnalytics();
+});
 
 // Having any listener stops Electron quitting when all windows close (tray-only app)
 app.on('window-all-closed', () => {});
@@ -86,6 +96,15 @@ function updateTrayMenu(t: Tray): void {
       checked: app.getLoginItemSettings().openAtLogin,
       click: (item) => {
         app.setLoginItemSettings({ openAtLogin: item.checked });
+        updateTrayMenu(t);
+      },
+    },
+    {
+      label: '匿名使用统计',
+      type: 'checkbox',
+      checked: isAnalyticsEnabled(),
+      click: (item) => {
+        setAnalyticsEnabled(item.checked);
         updateTrayMenu(t);
       },
     },
