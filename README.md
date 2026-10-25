@@ -85,3 +85,31 @@ node scripts/gen-icon.js   # 重新生成图标
 
 native/target/release/traffic-etw.exe --list-ifaces out.json   # 查看网卡及 VPN 判定（无需管理员）
 ```
+
+## 包体大小
+
+安装包大，是因为 Electron 每个安装包都自带一整套 Chromium 内核和 Node.js，AppTraffic 自己的代码只占很小一部分。
+
+| 包 | 大小 |
+|---|---|
+| Windows 安装包（NSIS，已压缩） | 约 68 MB |
+| Windows 安装后 | 约 221 MB |
+| Mac dmg（arm64 / x64 各一个） | 约 81 / 88 MB |
+
+Windows 安装后的构成（1.0.2 实测）：
+
+| 内容 | 大小 | 说明 |
+|---|---|---|
+| `AppTraffic.exe` | 172.5 MB | 主程序，编译进了 Chromium、V8 和 Node.js |
+| Chromium 附带文件 | 约 45 MB | 渲染库（`libGLESv2`、`vk_swiftshader`、`d3dcompiler_47`）、`icudtl.dat`、`resources.pak`、`ffmpeg.dll`、许可证等 |
+| `resources/app.asar` | 0.3 MB | AppTraffic 的界面和业务代码 |
+| `resources/traffic-etw.exe` | 0.5 MB | ETW 采集程序（Rust） |
+
+99% 以上是 Electron 运行环境本身，和功能多少无关。
+
+已经做的瘦身：
+
+- `electronLanguages` 只保留 `zh-CN` 和 `en-US` 两个语言包（Chromium 默认带 50 多种语言）。Mac 上由 `scripts/after-pack.js` 删掉其余的 `.lproj`，再重新签名
+- 不引入大型第三方依赖，只用 Node 和 Electron 自带的能力
+
+想要再明显变小，只能换框架：改用 Tauri（Rust 加系统自带的 WebView），安装包大约 5–10 MB。但主进程要全部用 Rust 重写，Windows 依赖 WebView2，Mac 用 WebKit，可能有兼容问题。目前不打算迁移。
