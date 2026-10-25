@@ -17,6 +17,18 @@ const HOSTNAME = 'apptraffic.app';
 /** How often to check whether the day rolled over (the app runs for days). */
 const ACTIVE_CHECK_MS = 60 * 60 * 1000;
 
+/**
+ * Umami derives the visitor from ip + user agent + install ID, so a changing
+ * IP (hotspot, new network) or an app upgrade would count as a new visitor.
+ * Pin both: the visitor then only depends on the install ID (and Umami's
+ * monthly salt). Costs the geo breakdown, which needs the real IP.
+ */
+const FIXED_IP = '127.0.0.1';
+const CLIENT =
+  process.platform === 'darwin'
+    ? { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppTraffic', os: 'Mac OS' }
+    : { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppTraffic', os: 'Windows 10' };
+
 let timer: NodeJS.Timeout | null = null;
 
 function enabled(): boolean {
@@ -54,6 +66,11 @@ async function send(name: string): Promise<void> {
       screen: `${width}x${height}`,
       name,
       id: installId(),
+      ip: FIXED_IP,
+      userAgent: CLIENT.userAgent,
+      os: CLIENT.os,
+      browser: 'AppTraffic',
+      device: 'desktop',
       data: { version: app.getVersion(), os: process.platform },
     },
   };
@@ -62,8 +79,8 @@ async function send(name: string): Promise<void> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // Umami drops requests without a browser-like UA and parses the OS from it
-        'User-Agent': app.userAgentFallback,
+        // Umami drops requests without a browser-like UA
+        'User-Agent': CLIENT.userAgent,
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
