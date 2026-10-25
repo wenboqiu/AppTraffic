@@ -114,6 +114,8 @@ function updateTrayMenu(t: Tray): void {
     },
     { type: 'separator' },
     { label: '退出', role: 'quit' },
+    { type: 'separator' },
+    { label: `版本 ${app.getVersion()}`, enabled: false },
   ]);
 
   trayMenu = menu;
