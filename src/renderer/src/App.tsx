@@ -50,6 +50,7 @@ export default function App() {
           <span className="app-title">
             <span className={`status-dot ${anyOn ? 'ok' : 'bad'}`} />
             应用流量
+            <span className="app-version">v{__APP_VERSION__}</span>
           </span>
           <button className="close-btn" title="关闭" onClick={() => window.electronAPI.closePopup()}>
             ×
