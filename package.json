@@ -36,7 +36,12 @@
     "files": [
       "out/**/*"
     ],
+    "afterPack": "scripts/after-pack.js",
     "afterAllArtifactBuild": "scripts/collect-dist.js",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "win": {
       "target": [
         {
