@@ -1,6 +1,6 @@
 {
   "name": "app-traffic",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AppTraffic — 按应用统计上网流量，区分直连、代理与 VPN",
   "main": "out/main/index.js",
   "scripts": {
