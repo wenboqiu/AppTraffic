@@ -52,7 +52,11 @@ function today(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-async function send(name: string): Promise<void> {
+/**
+ * Without a name it's a pageview. Umami's overview only counts visitors that
+ * have at least one pageview, so one goes with every launch and every active day.
+ */
+async function send(name?: string): Promise<void> {
   if (!enabled()) return;
   const { width, height } = screen.getPrimaryDisplay().size;
   const body = {
@@ -91,10 +95,11 @@ async function send(name: string): Promise<void> {
 }
 
 /** Report once per local day, however long the app has been running. */
-function checkActive(): void {
+function checkActive(withPageview = true): void {
   const day = today();
   if (getSettings().lastActiveDay === day || !enabled()) return;
   updateSettings({ lastActiveDay: day });
+  if (withPageview) void send();
   void send('app_active');
 }
 
@@ -104,8 +109,9 @@ export function startAnalytics(): void {
       updateSettings({ installReported: true });
       void send('app_install');
     }
+    void send();
     void send('app_start');
-    checkActive();
+    checkActive(false);
   }
   timer ??= setInterval(checkActive, ACTIVE_CHECK_MS);
 }
