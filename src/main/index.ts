@@ -1,4 +1,4 @@
-import { app, Tray, Menu, nativeImage, shell, clipboard } from 'electron';
+import { app, Tray, Menu, nativeImage, shell } from 'electron';
 import path from 'path';
 import { existsSync } from 'fs';
 import { createPopupWindow, togglePopup, isPopupVisible } from './popup';
@@ -12,7 +12,6 @@ import {
   setAnalyticsEnabled,
 } from './services/analytics';
 import { fmtBytes, fmtSpeed } from '../shared/format';
-import { WECHAT_ACCOUNT } from '../shared/brand';
 
 // Single-instance lock
 if (!app.requestSingleInstanceLock()) {
@@ -112,11 +111,6 @@ function updateTrayMenu(t: Tray): void {
     {
       label: '打开数据目录',
       click: () => shell.showItemInFolder(storePath()),
-    },
-    { type: 'separator' },
-    {
-      label: `关注公众号「${WECHAT_ACCOUNT}」（复制名称）`,
-      click: () => clipboard.writeText(WECHAT_ACCOUNT),
     },
     { type: 'separator' },
     { label: '退出', role: 'quit' },
