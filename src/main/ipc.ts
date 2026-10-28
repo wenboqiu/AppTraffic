@@ -1,4 +1,4 @@
-import { ipcMain, shell } from 'electron';
+import { clipboard, ipcMain, shell } from 'electron';
 import { getSnapshot, runSourceAction } from './services/collector';
 import { storePath } from './services/store';
 import { getPopup, hidePopup, isPopupVisible, setPopupHeight } from './popup';
@@ -19,6 +19,10 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.on('open-data-folder', () => shell.showItemInFolder(storePath()));
+
+  ipcMain.on('copy-text', (_e, text: string) => {
+    if (typeof text === 'string') clipboard.writeText(text);
+  });
 
   ipcMain.on('close-popup', () => hidePopup());
 

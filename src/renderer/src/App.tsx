@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import type { Range, Snapshot } from '../../shared/types';
 import { fmtBytes, fmtSpeed } from '../../shared/format';
 import ProcessList from './components/ProcessList';
+import { WECHAT_ACCOUNT } from '../../shared/brand';
 
 const RANGES: { key: Range; label: string }[] = [
   { key: 'today', label: '今天' },
@@ -120,12 +121,35 @@ export default function App() {
           <span>
             {snap?.since ? `记录自 ${snap.since}` : '暂无记录'}
           </span>
+          <WechatLink />
           <button className="link-btn" onClick={() => window.electronAPI.openDataFolder()}>
             数据目录
           </button>
         </footer>
       </div>
     </div>
+  );
+}
+
+/** 推荐作者的公众号：点一下复制名称，方便去微信里搜 */
+function WechatLink() {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <button
+      className="link-btn"
+      title="点击复制公众号名称"
+      onClick={() => {
+        window.electronAPI.copyText(WECHAT_ACCOUNT);
+        setCopied(true);
+      }}
+    >
+      {copied ? '已复制，去微信搜索' : `公众号「${WECHAT_ACCOUNT}」`}
+    </button>
   );
 }
 

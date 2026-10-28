@@ -21,6 +21,10 @@ const api = {
     ipcRenderer.send('open-data-folder');
   },
 
+  copyText: (text: string): void => {
+    ipcRenderer.send('copy-text', text);
+  },
+
   closePopup: (): void => {
     ipcRenderer.send('close-popup');
   },
