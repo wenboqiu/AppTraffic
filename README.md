@@ -9,7 +9,7 @@ Windows / macOS 托盘（菜单栏）小工具：按应用统计上网流量，�
 - 按进程累计上传 / 下载；今天 / 7 天 / 30 天 / 全部
 - 每个应用的流量拆成路线：直连、经某个代理客户端（Clash Verge、Mihomo Party、v2rayN…）、经某个 VPN 网卡
 - 实时速度（总体 + 每个应用）
-- 点开某个应用：exe 路径（点击在资源管理器中定位）、连接数、访问最多的域名
+- 点开某个应用：exe 路径（点击在资源管理器 / 访达中定位）、连接数、访问最多的域名
 - 右键菜单：开机自启、匿名使用统计、打开数据目录、退出
 - 弹窗底部推荐作者的公众号「游光片羽」，点击复制名称
 
@@ -63,54 +63,57 @@ Windows / macOS 托盘（菜单栏）小工具：按应用统计上网流量，�
 
 ## 平台
 
-和操作系统相关的部分都在 `src/main/platform/`，其余代码只通过 `Platform` 接口（`platform/types.ts`）使用：
+和操作系统相关的部分都在 `src-tauri/src/platform/`，其余代码只通过 `platform::` 下的同一组函数使用，编译时按系统选一份：
 
-| | Windows（`win32/`） | macOS（`darwin/`） |
+| | Windows（`windows/`） | macOS（`macos/`） |
 |---|---|---|
 | 查内核进程（父进程、命令行） | WMI（PowerShell） | `ps`（按 `-flag` 切分参数，路径可含空格） |
 | 已知客户端配置 / 本地 socket | Clash Verge 配置、`\\.\pipe\*` | Clash Verge 配置、`/tmp`、`/tmp/verge` 下的 `.sock` |
-| 系统代理端口 | 注册表 Internet Settings | `scutil --proxy` |
+| 系统代理端口 | 注册表 Internet Settings（`reg query`） | `scutil --proxy` |
 | 系统流量 | ETW 助手 `traffic-etw.exe` + 计划任务 | `nettop`（无需 root） |
+| 在文件管理器中定位 | `explorer.exe /select,` | `open -R` |
 
 ## 开发
 
+技术栈：Tauri 2（Rust 主进程 + 系统自带 WebView）+ React 18 + Vite 5。需要 Node 和 Rust。
+
 ```bash
 npm install
-npm run dev            # 开发模式
-npm run typecheck
-npm run build:native   # 编译 traffic-etw.exe（需要 Rust）
-npm run dist           # 编译助手 + 打包 NSIS 安装包
-npm run dist:mac       # 在 Mac 上打包 dmg（x64 + arm64，未签名）
-# 安装包按版本号收集到 dist/<版本号>/（中间文件在 dist/.build/）；Mac 上打的 dmg 拷到同一目录
+npm run dev            # 前端开发服务器（单独用）
+npm run tauri dev      # 开发模式：编译 Rust 并打开应用
+npm run typecheck      # 前端类型检查
+cargo test --manifest-path src-tauri/Cargo.toml   # 单元测试
+npm run build:native   # 编译 traffic-etw.exe（Windows，需要 Rust）
+npm run dist           # Windows：编译助手 + 打包 NSIS 安装包
+npm run dist:mac       # 在 Mac 上打包（universal，未签名）
+# 安装包按版本号收集到 dist/<版本号>/
 node scripts/gen-icon.js   # 重新生成图标
 
 native/target/release/traffic-etw.exe --list-ifaces out.json   # 查看网卡及 VPN 判定（无需管理员）
 ```
 
+- 调试时设环境变量 `APPTRAFFIC_DATA=某个目录`，数据（`traffic.json`、`settings.json`）就写到那里，不会动已安装版本的历史。
+- 调试版默认不上报使用统计，设 `APPTRAFFIC_ANALYTICS=1` 才上报。
+- `dist:mac` 要在 Mac 上跑，并且 Rust 要同时装 `x86_64-apple-darwin` 和 `aarch64-apple-darwin` 两个目标。通过 SSH 打包时，Tauri 自带的 dmg 步骤要走 Finder 的 AppleScript，会超时；`.app` 已经正常生成，用 `hdiutil create -srcfolder` 手工做 dmg 即可。
+
 ## 包体大小
 
-安装包大，是因为 Electron 每个安装包都自带一整套 Chromium 内核和 Node.js，AppTraffic 自己的代码只占很小一部分。
+2.0 起从 Electron 迁移到 Tauri 2，包体大幅缩小：Electron 每个安装包都自带一整套 Chromium 内核和 Node.js，而 Tauri 用系统自带的 WebView，主程序是 Rust 编译出来的。
 
-| 包 | 大小 |
-|---|---|
-| Windows 安装包（NSIS，已压缩） | 约 68 MB |
-| Windows 安装后 | 约 221 MB |
-| Mac dmg（arm64 / x64 各一个） | 约 81 / 88 MB |
-
-Windows 安装后的构成（1.0.2 实测）：
-
-| 内容 | 大小 | 说明 |
+| 包 | Electron 版（1.0.x） | Tauri 版（2.0.0） |
 |---|---|---|
-| `AppTraffic.exe` | 172.5 MB | 主程序，编译进了 Chromium、V8 和 Node.js |
-| Chromium 附带文件 | 约 45 MB | 渲染库（`libGLESv2`、`vk_swiftshader`、`d3dcompiler_47`）、`icudtl.dat`、`resources.pak`、`ffmpeg.dll`、许可证等 |
-| `resources/app.asar` | 0.3 MB | AppTraffic 的界面和业务代码 |
-| `resources/traffic-etw.exe` | 0.5 MB | ETW 采集程序（Rust） |
+| Windows 安装包（NSIS） | 约 71 MB | 约 1.5 MB |
+| Windows 主程序 `AppTraffic.exe` | 约 172 MB（另有约 45 MB Chromium 附带文件） | 约 3.7 MB |
+| macOS dmg | arm64 / x64 各一个，约 81 / 88 MB | universal 一个，约 4 MB |
 
-99% 以上是 Electron 运行环境本身，和功能多少无关。
+Tauri 版的 Windows 安装目录里只有 `AppTraffic.exe`、`traffic-etw.exe`（ETW 采集程序，约 0.5 MB）、`etw-task.ps1` 和卸载程序。
 
-已经做的瘦身：
+体积优化：release 配置用 `opt-level = "s"`、LTO、strip 和 `panic = "abort"`；依赖很少（tauri 和它的单实例、自启动插件，serde、ureq）。
 
-- `electronLanguages` 只保留 `zh-CN` 和 `en-US` 两个语言包（Chromium 默认带 50 多种语言）。Mac 上由 `scripts/after-pack.js` 删掉其余的 `.lproj`，再重新签名
-- 不引入大型第三方依赖，只用 Node 和 Electron 自带的能力
+代价：
 
-想要再明显变小，只能换框架：改用 Tauri（Rust 加系统自带的 WebView），安装包大约 5–10 MB。但主进程要全部用 Rust 重写，Windows 依赖 WebView2，Mac 用 WebKit，可能有兼容问题。目前不打算迁移。
+- Windows 依赖系统的 WebView2（Windows 10/11 已自带，较旧的系统需要装运行时）；macOS 用 WebKit，渲染上可能和 Chromium 有细微差别。
+- 迁移时主进程约 4000 行 TypeScript 全部用 Rust 重写；macOS 版和 Windows 版共用同一套对账逻辑。
+- 没有代码签名，macOS 上首次打开需要右键「打开」。
+
+Electron 版的代码保留在 `master` 分支。
