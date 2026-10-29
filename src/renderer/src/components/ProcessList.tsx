@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { api } from '../api';
 import type { ProcRow } from '../../../shared/types';
 import { fmtBytes, fmtSpeed } from '../../../shared/format';
 
@@ -53,7 +54,7 @@ export default function ProcessList({ procs }: { procs: ProcRow[] }) {
             {expanded && (
               <div className="proc-detail">
                 {p.path && (
-                  <div className="proc-path" onClick={() => window.electronAPI.showInFolder(p.path)}>
+                  <div className="proc-path" onClick={() => api.showInFolder(p.path)}>
                     {p.path}
                   </div>
                 )}

@@ -1,112 +1,30 @@
 {
   "name": "app-traffic",
-  "version": "1.0.3",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
   "description": "AppTraffic — 按应用统计上网流量，区分直连、代理与 VPN",
-  "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "start": "electron-vite preview",
-    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
-    "dist": "npm run build:native && npm run build && electron-builder",
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.web.json --noEmit",
+    "tauri": "tauri",
     "build:native": "cargo build --release --manifest-path native/Cargo.toml",
-    "dist:mac": "npm run build && electron-builder --mac"
+    "dist": "npm run build:native && tauri build --bundles nsis && node scripts/collect-dist.mjs",
+    "dist:mac": "tauri build --target universal-apple-darwin --bundles app,dmg && node scripts/collect-dist.mjs"
   },
-  "dependencies": {},
+  "allowScripts": { "esbuild@0.21.5": true },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
   "devDependencies": {
-    "@types/node": "^20.14.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^31.1.0",
-    "electron-builder": "^24.13.3",
-    "electron-vite": "^2.3.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "typescript": "^5.5.3",
     "vite": "^5.3.1"
-  },
-  "build": {
-    "appId": "me.xueshi.apptraffic.win",
-    "productName": "AppTraffic",
-    "directories": {
-      "buildResources": "resources",
-      "output": "dist/.build"
-    },
-    "files": [
-      "out/**/*"
-    ],
-    "afterPack": "scripts/after-pack.js",
-    "afterAllArtifactBuild": "scripts/collect-dist.js",
-    "electronLanguages": [
-      "zh-CN",
-      "en-US"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "resources/icon.png",
-      "extraResources": [
-        {
-          "from": "resources",
-          "to": "resources",
-          "filter": [
-            "**/*",
-            "!installer.nsh"
-          ]
-        },
-        {
-          "from": "native/target/release/traffic-etw.exe",
-          "to": "traffic-etw.exe"
-        }
-      ],
-      "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": false,
-      "include": "resources/installer.nsh",
-      "perMachine": true
-    },
-    "mac": {
-      "appId": "me.xueshi.apptraffic",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "resources/icon.png",
-      "category": "public.app-category.utilities",
-      "identity": null,
-      "extendInfo": {
-        "LSUIElement": true
-      },
-      "extraResources": [
-        {
-          "from": "resources",
-          "to": "resources",
-          "filter": [
-            "tray-icon.png",
-            "icon.png"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
-    }
-  },
-  "allowScripts": {
-    "electron@31.7.7": true,
-    "esbuild@0.21.5": true
   }
 }

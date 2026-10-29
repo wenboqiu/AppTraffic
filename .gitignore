@@ -3,3 +3,7 @@ out/
 dist/
 *.tsbuildinfo
 native/target/
+_old/
+src-tauri/target/
+src-tauri/gen/
+dist-web/

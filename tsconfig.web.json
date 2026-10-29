@@ -7,7 +7,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "composite": true
+    "composite": false, "noEmit": true
   },
   "include": [
     "src/renderer/**/*",

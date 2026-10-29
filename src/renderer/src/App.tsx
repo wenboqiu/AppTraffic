@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { api } from './api';
 import type { Range, Snapshot } from '../../shared/types';
 import { fmtBytes, fmtSpeed } from '../../shared/format';
 import ProcessList from './components/ProcessList';
@@ -17,7 +18,7 @@ export default function App() {
   const appRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    setSnap(await window.electronAPI.getSnapshot(range));
+    setSnap(await api.getSnapshot(range));
   }, [range]);
 
   useEffect(() => {
@@ -26,13 +27,13 @@ export default function App() {
     return () => window.removeEventListener('focus', load);
   }, [load]);
 
-  useEffect(() => window.electronAPI.onSnapshot(setSnap), []);
+  useEffect(() => api.onSnapshot(setSnap), []);
 
   // Keep the window height matched to the content
   useEffect(() => {
     const el = appRef.current;
     if (!el) return;
-    const report = () => window.electronAPI.resizePopup(el.offsetHeight + 2);
+    const report = () => api.resizePopup(el.offsetHeight + 2);
     const ro = new ResizeObserver(report);
     ro.observe(el);
     report();
@@ -53,7 +54,7 @@ export default function App() {
             应用流量
             <span className="app-version">v{__APP_VERSION__}</span>
           </span>
-          <button className="close-btn" title="关闭" onClick={() => window.electronAPI.closePopup()}>
+          <button className="close-btn" title="关闭" onClick={() => api.closePopup()}>
             ×
           </button>
         </header>
@@ -67,7 +68,7 @@ export default function App() {
                 {s.detail}
               </span>
               {s.action && (
-                <button className="source-btn" onClick={() => window.electronAPI.runSourceAction(s.id)}>
+                <button className="source-btn" onClick={() => api.runSourceAction(s.id)}>
                   {s.action}
                 </button>
               )}
@@ -122,7 +123,7 @@ export default function App() {
             {snap?.since ? `记录自 ${snap.since}` : '暂无记录'}
           </span>
           <WechatLink />
-          <button className="link-btn" onClick={() => window.electronAPI.openDataFolder()}>
+          <button className="link-btn" onClick={() => api.openDataFolder()}>
             数据目录
           </button>
         </footer>
@@ -144,7 +145,7 @@ function WechatLink() {
       className="link-btn"
       title="点击复制公众号名称"
       onClick={() => {
-        window.electronAPI.copyText(WECHAT_ACCOUNT);
+        api.copyText(WECHAT_ACCOUNT);
         setCopied(true);
       }}
     >
