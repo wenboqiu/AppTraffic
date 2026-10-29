@@ -1,0 +1,63 @@
+name: Release
+
+# 推送 v* 标签（如 v2.0.0）或在 Actions 页面手动运行：Windows 和 macOS 各打一个包，
+# 上传到同名的 GitHub Release（草稿，确认后再手动发布）。
+# 标签要和 src-tauri/tauri.conf.json 里的 version 一致。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --bundles nsis
+          - os: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+            native -> target
+
+      - run: npm ci
+
+      # Windows：ETW 采集程序要先编译，安装包把它作为资源带上
+      - name: 编译 traffic-etw.exe
+        if: matrix.os == 'windows-latest'
+        run: npm run build:native
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: AppTraffic v__VERSION__
+          releaseBody: |
+            ## 下载
+
+            - Windows：`AppTraffic_*_x64-setup.exe`（安装到 Program Files，按应用统计全部流量需要在界面里点「启用」授权一次）
+            - macOS：`AppTraffic_*_universal.dmg`（Intel / Apple 芯片通用，未签名，第一次打开请右键「打开」）
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
