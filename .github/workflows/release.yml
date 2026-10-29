@@ -1,7 +1,7 @@
 name: Release
 
 # 推送 v* 标签（如 v2.0.0）或在 Actions 页面手动运行：Windows 和 macOS 各打一个包，
-# 上传到同名的 GitHub Release（草稿，确认后再手动发布）。
+# 上传到同名的 GitHub Release 并直接公开发布。
 # 标签要和 src-tauri/tauri.conf.json 里的 version 一致。
 on:
   push:
@@ -58,6 +58,6 @@ jobs:
 
             - Windows：`AppTraffic_*_x64-setup.exe`（安装到 Program Files，按应用统计全部流量需要在界面里点「启用」授权一次）
             - macOS：`AppTraffic_*_universal.dmg`（Intel / Apple 芯片通用，未签名，第一次打开请右键「打开」）
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
